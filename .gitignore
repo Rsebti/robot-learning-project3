@@ -217,9 +217,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Claude Code local state (worktrees, agent settings, project context)
+# Claude Code local state (worktrees, agent settings)
 .claude/
-CLAUDE.md
 
 # Local-only assets (screenshots, project briefs)
 *.webp
