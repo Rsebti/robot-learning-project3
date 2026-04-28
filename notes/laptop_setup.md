@@ -43,7 +43,7 @@ conda activate lerobot
 Install LeRobot + extras (non-editable, simpler than the fixed PC) :
 
 ```bash
-pip install "lerobot[feetech,dataset]==0.5.2"
+pip install "lerobot[feetech,dataset]==0.5.1"
 ```
 
 Quick check :
@@ -111,7 +111,7 @@ With the SO-101 NOT yet plugged :
 conda activate lerobot
 hf auth whoami           # → Rsebti
 nvidia-smi               # only if laptop has a GPU; ignore otherwise
-python -c "import lerobot; print(lerobot.__version__)"   # → 0.5.2
+python -c "import lerobot; print(lerobot.__version__)"   # → 0.5.1
 ```
 
 Then plug the SO-101 and follow `teleop/record_demos.md`.

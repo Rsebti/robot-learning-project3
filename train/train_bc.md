@@ -5,7 +5,7 @@ Overfit an ACT policy on the 20 quasi-identical demos to validate the pipeline.
 Target: the policy reproduces the demo motion when deployed on the real SO-101.
 
 ## Prerequisites
-- Dataset pushed to HF: `Rsebti/projet3-demos-v1`
+- Dataset pushed to HF: `Rsebti/projet3-demos-v1bis`
 - LeRobot installed (env `lerobot`, Python 3.12)
 - HF logged in (`hf auth login`)
 - GPU available (`nvidia-smi`)
@@ -14,7 +14,7 @@ Target: the policy reproduces the demo motion when deployed on the real SO-101.
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=Rsebti/projet3-demos-v1 \
+  --dataset.repo_id=Rsebti/projet3-demos-v1bis \
   --policy.type=act \
   --policy.device=cuda \
   --policy.repo_id=Rsebti/projet3-act-sanity \
