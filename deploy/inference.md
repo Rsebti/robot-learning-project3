@@ -15,14 +15,24 @@ POLICY_PATH=Rsebti/projet3-act-sanity \
 The model lives on Hugging Face Hub. `lerobot-record` pulls it directly — no
 local copy step. PowerShell equivalent at the bottom of this file.
 
-**First time on a new machine?** You need an HF token with read access to
-`Rsebti/projet3-act-sanity` (the repo is private):
+**First time on a new machine?** You need:
+
+1. The `lerobot` Python environment active (per `notes/laptop_setup.md` —
+   conda env `lerobot` with `lerobot` and `huggingface_hub` installed). The
+   `hf` CLI ships with `huggingface_hub`; it is **not** a system binary, so
+   without an activated env you'll see `hf: command not found`.
+2. An HF token with **read** access to `Rsebti/projet3-act-sanity` (the
+   repo is private — ask the repo owner to add you as a collaborator at
+   `https://huggingface.co/Rsebti/projet3-act-sanity/settings`).
 
 ```bash
-hf auth login   # paste a read-scoped token, or a write token if you'll also push
+conda activate lerobot   # or: source /path/to/.venv/bin/activate
+hf auth login            # paste your read token; answer "n" to git credential prompt
+hf auth whoami           # should print your HF username
 ```
 
-Or set `HF_TOKEN=hf_xxx` in the environment before running `infer.sh`.
+Or, to skip the `hf` CLI entirely, set `HF_TOKEN=hf_xxx` in the environment
+before running `infer.sh` — `huggingface_hub` reads it automatically.
 
 ## What gets called
 
