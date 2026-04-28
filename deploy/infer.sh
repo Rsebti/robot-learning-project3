@@ -6,19 +6,19 @@
 #
 # Usage (env-var driven, all optional except FOLLOWER_PORT on the actual robot):
 #
-#   FOLLOWER_PORT=/dev/ttyACM0 \
-#   POLICY_PATH=train/checkpoints/projet3_act_v1bis/last/pretrained_model \
-#     bash deploy/infer.sh
+#   # default: pull policy from HF Hub (needs `hf auth login` once)
+#   FOLLOWER_PORT=/dev/ttyACM0 bash deploy/infer.sh
 #
-#   # or pull from HF directly (no local copy needed):
-#   FOLLOWER_PORT=/dev/ttyACM0 POLICY_PATH=Rsebti/projet3-act-sanity \
+#   # or point at a local pretrained_model/ directory
+#   FOLLOWER_PORT=/dev/ttyACM0 \
+#   POLICY_PATH=./some/local/pretrained_model \
 #     bash deploy/infer.sh
 #
 # Run on the laptop next to the robot. On Windows use Git Bash or translate
 # the env-var lines to the PowerShell equivalent (see deploy/inference.md).
 set -euo pipefail
 
-POLICY_PATH="${POLICY_PATH:-train/checkpoints/projet3_act_v1bis/last/pretrained_model}"
+POLICY_PATH="${POLICY_PATH:-Rsebti/projet3-act-sanity}"
 POLICY_DEVICE="${POLICY_DEVICE:-cuda}"
 
 FOLLOWER_PORT="${FOLLOWER_PORT:-}"

@@ -83,7 +83,8 @@ uv run accelerate launch \
   --dataset.image_transforms.tfs="$IMAGE_TFS" \
   --policy.type=act \
   --policy.device=cuda \
-  --policy.push_to_hub=false \
+  --policy.push_to_hub="${PUSH_TO_HUB:-true}" \
+  --policy.repo_id="${POLICY_REPO_ID:-Rsebti/projet3-act-sanity}" \
   --policy.dim_model=256 \
   --policy.n_heads=8 \
   --policy.dim_feedforward=1024 \

@@ -7,12 +7,22 @@ the SO-101, read this first.
 ## TL;DR
 
 ```bash
-FOLLOWER_PORT=/dev/ttyACM0 bash deploy/infer.sh        # Linux / macOS / Git Bash
+FOLLOWER_PORT=/dev/ttyACM0 \
+POLICY_PATH=Rsebti/projet3-act-sanity \
+  bash deploy/infer.sh
 ```
 
-The default `POLICY_PATH` is `train/checkpoints/projet3_act_v1bis/last/pretrained_model`,
-so as long as the checkpoint is committed at that path in the repo, no other
-flag is needed. PowerShell equivalent at the bottom of this file.
+The model lives on Hugging Face Hub. `lerobot-record` pulls it directly — no
+local copy step. PowerShell equivalent at the bottom of this file.
+
+**First time on a new machine?** You need an HF token with read access to
+`Rsebti/projet3-act-sanity` (the repo is private):
+
+```bash
+hf auth login   # paste a read-scoped token, or a write token if you'll also push
+```
+
+Or set `HF_TOKEN=hf_xxx` in the environment before running `infer.sh`.
 
 ## What gets called
 
@@ -70,7 +80,46 @@ should be `.gitignore`d to keep repo size manageable (see Maintenance below).
 
 ### Three ways to get the checkpoint to the laptop
 
-1. **Direct commit (recommended for sanity check)** — on the 5090 box:
+1. **Hugging Face Hub (default — already set up)**
+
+   The current sanity checkpoint already lives at
+   `Rsebti/projet3-act-sanity` (private repo, ~68 MB, 7 files).
+   On the laptop, after `hf auth login`:
+
+   ```bash
+   POLICY_PATH=Rsebti/projet3-act-sanity bash deploy/infer.sh
+   ```
+
+   No git pull, no local copy. `lerobot-record` resolves the repo id and
+   downloads on first use; subsequent runs hit the local cache at
+   `~/.cache/huggingface/hub/`.
+
+   **To upload a new checkpoint** (from any machine where `hf auth login` was
+   done with a write-scoped Rsebti token):
+
+   ```bash
+   hf upload Rsebti/projet3-act-sanity \
+     <path-to-run>/checkpoints/last/pretrained_model . \
+     --repo-type model \
+     --commit-message "ACT step 20000"
+   ```
+
+   Or just rerun `train/launch_act.sh` with `PUSH_TO_HUB=true` (default).
+
+2. **scp from training box to laptop** — when you can't reach HF or don't
+   want the weights in the cache:
+
+   ```bash
+   # on the laptop, into a path of your choice
+   scp -r ethrc@<5090-host>:/home/ethrc/Desktop/training/checkpoints/projet3/projet3_act_v1bis_<TS>/checkpoints/last/pretrained_model \
+        ./local-checkpoint
+   POLICY_PATH=./local-checkpoint bash deploy/infer.sh
+   ```
+
+3. **Git commit (sanity-only fallback)** — works because `model.safetensors`
+   is 66 MB, under GitHub's 100 MB per-file cap. **Avoid for repeated runs**:
+   committing every checkpoint will balloon repo size.
+
    ```bash
    cd /home/tommaso/RobotLearningClassProject/robot-learning-project3
    mkdir -p train/checkpoints/projet3_act_v1bis/last
@@ -79,25 +128,6 @@ should be `.gitignore`d to keep repo size manageable (see Maintenance below).
    git add train/checkpoints/projet3_act_v1bis/last/pretrained_model
    git commit -m "Add ACT sanity-check checkpoint"
    git push
-   ```
-   Then on the laptop: `git pull` and you have everything.
-   *Total size: ~67 MB; under GitHub's 100 MB per-file limit.*
-
-2. **scp from box to laptop** — when you don't want the weights tracked in git:
-   ```bash
-   # on the laptop
-   scp -r ethrc@<5090-host>:/home/ethrc/Desktop/training/checkpoints/projet3/projet3_act_v1bis_<TS>/checkpoints/last/pretrained_model \
-        train/checkpoints/projet3_act_v1bis/last/
-   ```
-
-3. **Hugging Face Hub** — for sharing with teammates:
-   ```bash
-   # on the box (needs HF token with write access to Rsebti/...)
-   huggingface-cli upload Rsebti/projet3-act-sanity \
-     /home/ethrc/Desktop/training/checkpoints/projet3/projet3_act_v1bis_<TS>/checkpoints/last/pretrained_model \
-     --repo-type model
-   # on the laptop, pass the repo id directly — no local copy needed:
-   POLICY_PATH=Rsebti/projet3-act-sanity bash deploy/infer.sh
    ```
 
 ## Running inference (full reference)
@@ -112,7 +142,7 @@ should be `.gitignore`d to keep repo size manageable (see Maintenance below).
 
 | variable          | default                                                          |
 | ----------------- | ---------------------------------------------------------------- |
-| `POLICY_PATH`     | `train/checkpoints/projet3_act_v1bis/last/pretrained_model`      |
+| `POLICY_PATH`     | `Rsebti/projet3-act-sanity` (HF repo id) — or any local pretrained_model dir |
 | `POLICY_DEVICE`   | `cuda` (set `cpu` if no GPU on the laptop)                       |
 | `CAMERA_INDEX`    | `0`                                                              |
 | `CAMERA_WIDTH/HEIGHT/FPS` | `640 / 480 / 30`                                         |
