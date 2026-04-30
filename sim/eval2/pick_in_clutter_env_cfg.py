@@ -210,6 +210,27 @@ class EventCfg:
         },
     )
 
+    # Randomize the bowl position too — TA spec: "Bowls placed at randomized
+    # positions in the robot base frame". The same xy shift is applied to all
+    # 5 bowl primitives so the bowl shape (floor + 4 walls) stays intact.
+    # Range kept modest in y to avoid overlap with the cluster (cluster can
+    # reach y=-0.05 with its own randomization; bowl at default y=-0.15 plus
+    # +0.02 max stays at -0.13 + 0.068 wall_top = -0.062 < cluster_min_y).
+    randomize_bowl_position = EventTerm(
+        func=mdp.reset_cluster_uniform,
+        mode="reset",
+        params={
+            "position_range": {"x": (-0.04, 0.04), "y": (-0.02, 0.02)},
+            "asset_names": (
+                "bowl_floor",
+                "bowl_wall_xp",
+                "bowl_wall_xn",
+                "bowl_wall_yp",
+                "bowl_wall_yn",
+            ),
+        },
+    )
+
 
 @configclass
 class RewardsCfg:

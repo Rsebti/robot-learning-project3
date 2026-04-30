@@ -149,15 +149,18 @@ Ajouts vs v0 :
 **Status** : ✅ entraîne, success rate 1.30% à iter 499 (mieux que v0 malgré tâche plus dure)
 **Constat** : `lifting_target` plafonne à 0.20 — la condition de "soulevé" est trop dure
 
-### v1.1 — passe de compliance PDF (en cours)
+### v1.1 — passe de compliance PDF + fixes physiques
 
-**Objectif** : aligner v1 strictement avec la spec TA.
+**Objectif** : aligner v1 strictement avec la spec TA + résoudre les bugs
+qui empêchaient la convergence.
 
 Modifications majeures :
 | Aspect | v1 | v1.1 |
 |---|---|---|
 | **Couleur table** | gris foncé (USD Isaac default) | **`#B8ADA9`** primitive (spec exacte) |
+| **Taille table** | ~60 cm × 1 m (USD) | **80 cm × 1 m**, repositionnée pour que le robot soit ON the table |
 | **Taille bowl** | 10 cm de côté | **12 cm** (≥ spec, marge pour ~12 cubes) |
+| **Position bowl** | (0.30, -0.20), 36 cm du robot (limite reach) | **(0.20, -0.15), 25 cm** du robot |
 | **Hauteur murs bowl** | 4 cm | 2.5 cm (= hauteur cube) |
 | **Taille cubes** | 2.5 cm | **2 cm** (= vrais cubes en bois) |
 | **Cubes adjacents** | 3 cm de gap | **collés** (PDF: "adjacent / flat cluster") |
@@ -165,9 +168,32 @@ Modifications majeures :
 | **Lifting reward** | seuil unique 5 cm | **2 stages** : low (2.5 cm, w=10) + high (5 cm, w=10) |
 | **`target_to_bowl` gating** | h≥5 cm | h≥2.5 cm (déclenche plus tôt) |
 | **`success_bonus` poids** | 50 | **100** |
-| **PhysX `total_aggregate_pairs_capacity`** | 16K | **64K** (avait causé erreurs PhysX) |
+| **PhysX `total_aggregate_pairs_capacity`** | 16K | **64K** (corrige erreurs `missing interactions`) |
 
-**Status** : training en cours.
+**Status** : ✅ entraîne sainement. À iter 193/1000 sur RTX 5070 :
+- mean reward 22.99 (vs 3.66 dans v1.0 à iter 499)
+- `lifting_target_low` 1.71 (vs 0 dans v1.0/1.1 cassée)
+- `block_*_dropped` 1-2% (vs 50% en v1.1 cassée à cause des cubes au bord de table)
+- success rate 2.19% (vs 1.30% v1.0)
+
+### v1.2 — randomization de la position du bowl
+
+**Objectif** : rendre le bowl mobile à chaque reset, conforme au PDF :
+> "Bowls placed at randomized positions in the robot base frame"
+
+Implémentation :
+- Nouvel event `randomize_bowl_position` qui réutilise `reset_cluster_uniform`
+  pour appliquer le même décalage xy aux **5 primitives** du bowl
+  (floor + 4 walls), préservant la forme.
+- Range : ±4 cm en x, ±2 cm en y. Le y est volontairement modeste pour
+  éviter que le bowl chevauche le cluster (cluster ±5 cm en y peut
+  descendre à y=-0.05 ; bowl à y=-0.13 + wall_top 0.068 = -0.062, marge
+  ~1 cm).
+
+À élargir progressivement quand on aura validé que la policy gère le
+goal-conditioning sur la position du bowl.
+
+**Status** : implémenté, à entraîner.
 
 ---
 
@@ -259,13 +285,16 @@ PPO log toutes les itérations. Termes clés à surveiller :
 
 ## 10. Écarts connus vs spec PDF (à fixer)
 
-### v1.2 — Bowl position randomisée
+### v1.2 — Bowl position randomisée ✅ IMPLÉMENTÉ
 PDF : *"Bowls placed at randomized positions in the robot base frame"*.
-Notre v1.1 : bowl à position fixe.
 
-**Implementation prévue** : étendre `reset_cluster_uniform` (ou nouvelle fonction
-`reset_bowl_position`) pour appliquer une translation xy synchronisée aux 5
-primitives du bowl à chaque reset.
+**Implémentation** : nouvel event `randomize_bowl_position` dans la `EventCfg`
+de `pick_in_clutter_env_cfg.py`. Réutilise `reset_cluster_uniform` avec les
+5 noms d'assets du bowl. Range actuel : ±4 cm en x, ±2 cm en y.
+
+**À faire** : entraîner et valider que la policy adapte sa trajectoire à la
+position du bowl. Si le succès chute trop, élargir le range progressivement
+(curriculum) ou augmenter le poids de `target_to_bowl_*`.
 
 ### v2 — Visual observation
 PDF : *"The policy must operate on visual observation of blocks"*.
