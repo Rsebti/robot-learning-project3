@@ -350,7 +350,55 @@ y accèdent directement.
 
 ---
 
-## 12. Liens utiles
+## 12. Reproduire la baseline v1.2
+
+Tout le code, la config et les hyperparams sont dans le repo : pour retomber
+sur la baseline actuelle, **il suffit de re-entraîner**. ~25 min sur RTX 5070,
+±10 % sur les métriques finales à cause de la stochasticité PPO.
+
+Commande exacte qui a produit la baseline actuelle :
+```powershell
+uv run python -m sim.eval2.scripts.train \
+    --task Eval2-PickInClutter-v1 \
+    --headless --num_envs 4096 --max_iterations 1000 \
+    --seed 42
+```
+
+Hyperparamètres dans `sim/eval2/agents/rsl_rl_ppo_cfg.py` (PPO standard, MLP 256-128-64, lr 1e-4 adaptive, 24 steps × 4096 envs par iter).
+
+Métriques attendues à iter 999 (à ±10 % près à cause de la stochasticité PPO) :
+- Mean reward ~ 119
+- `lifting_target_low` ~ 6.8
+- `target_to_bowl_coarse` ~ 5.9
+- `success_bonus` ~ 0.014
+- success rate ~ 7.5 %
+
+Si tu vois des chiffres très différents (genre `lifting_target_low = 0`), c'est probablement un bug d'environnement (PhysX, table edge, etc.) — relire la section 5 sur les pièges trouvés en v1.1.
+
+### Logs et artefacts
+
+Pendant le training, rsl_rl écrit dans :
+```
+<isaac_so_arm101>/logs/rsl_rl/eval2_pick_in_bowl/<timestamp>/
+├── model_100.pt            ← checkpoints tous les 100 iter
+├── model_200.pt
+├── ...
+├── model_999.pt
+├── params/
+│   └── env.yaml            ← config env figée pour ce run
+├── git/
+│   └── isaac_so_arm101.diff
+└── events.out.tfevents.*   ← TensorBoard
+```
+
+Pour visualiser les courbes :
+```powershell
+tensorboard --logdir <isaac_so_arm101>/logs/rsl_rl/eval2_pick_in_bowl
+```
+
+---
+
+## 13. Liens utiles
 
 - TA spec PDF : [`notes/project3_rl_final_details.md`](../notes/project3_rl_final_details.md)
 - Plan de phase générale Eval 2 : [`notes/eval2_plan.md`](../notes/eval2_plan.md)
@@ -361,14 +409,44 @@ y accèdent directement.
 
 ---
 
-## 13. TL;DR pour quelqu'un qui débarque
+## 14. TL;DR pour quelqu'un qui débarque
 
 1. Repo Eval 2 fonctionnel : structure complète + 4 tâches gym enregistrées
-2. v0 et v1 entraînent en local sur RTX 5070 (~10-20 min pour 1000 iter)
-3. Compliance PDF passée (couleur table, taille bowl, blocs adjacents) en v1.1
-4. **Pas encore de caméra** — observations sont ground-truth pour l'instant.
-   À fixer en v2 avec module de perception modulaire.
-5. **Bowl pos pas encore randomisée** — à fixer en v1.2.
-6. Success rate actuel : ~1% à 1000 iter PPO. Faible mais structure validée.
-   Plan pour améliorer : reward shaping, training plus long (5000+ iter),
-   éventuellement BC warmstart à partir des démos teleop.
+2. v0, v1, v1.1, v1.2 entraînent en local sur RTX 5070 (~25 min pour 1000 iter à 4096 envs)
+3. **Toute la spec PDF est implémentée** sauf l'observation visuelle (v2 prévu)
+4. **Baseline v1.2** : success rate sim ~ 7.5 % à 1000 iter PPO (cf. section 12 pour la
+   commande exacte de reproduction).
+5. Goulot d'étranglement actuel : `target_to_bowl_fine` (descente précise au-dessus du
+   bowl). Pistes : training plus long, boost reward fine, curriculum, BC warmstart.
+6. Reste à faire pour points : v2 caméra + perception modulaire + deploy au robot réel.
+
+## 15. Procédure deploy au robot réel (Eval 2 day)
+
+Le PDF dit explicitement que la position du bowl et la couleur cible sont **fournies
+en input** par les TAs — pas à détecter visuellement. Le seul truc à percevoir, ce
+sont les positions des blocs depuis la wrist cam.
+
+```
+1. Les TAs placent le bowl + 2 blocs colorés sur la table
+2. Les TAs mesurent / annoncent (bowl_x, bowl_y, bowl_z) en frame robot
+3. Les TAs annoncent la couleur cible (e.g. "rouge")
+4. On lance :
+   $ python deploy_eval2.py \
+       --bowl_x=0.20 --bowl_y=-0.18 --bowl_z=0.02 \
+       --target_color=red \
+       --policy=Rsebti/projet3-eval2-v1.x
+5. Le script :
+   - Lit joint_pos / joint_vel des servos Feetech à 30 Hz
+   - Capture l'image wrist cam, détecte block_red_xy et block_blue_xy via le
+     module de perception (HSV color filter ou détecteur entraîné)
+   - Concatène l'observation : joint_pos + joint_vel + block_red + block_blue
+     + bowl (constant, fourni en arg) + target_color (constant, fourni)
+     + last_action
+   - Inférence policy → action
+   - Envoie l'action aux servos
+6. Boucle jusqu'au succès ou time-out
+```
+
+Le `deploy_eval2.py` reste à écrire — il sera structurellement identique au
+`deploy/inference.md` du sanity check, en remplaçant l'ACT par notre policy
+PPO Eval 2 et en injectant les inputs goal-conditionnés.
