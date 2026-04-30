@@ -21,9 +21,8 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
-from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
+from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from . import mdp
 
@@ -62,11 +61,19 @@ class PickInBowlSceneCfg(InteractiveSceneCfg):
         ),
     )
 
-    # Standard Isaac Lab manipulation table.
+    # Table — primitive cuboid with the exact spec color #B8ADA9.
+    # See pick_in_clutter_env_cfg.py for the rationale.
     table = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Table",
-        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.5, 0, 0], rot=[0.707, 0, 0, 0.707]),
-        spawn=UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd"),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.5, 0, -0.02], rot=[0.707, 0, 0, 0.707]),
+        spawn=sim_utils.CuboidCfg(
+            size=(1.0, 0.6, 0.04),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.722, 0.678, 0.663),  # #B8ADA9
+                metallic=0.0,
+            ),
+        ),
     )
 
     plane = AssetBaseCfg(

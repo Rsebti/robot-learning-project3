@@ -103,12 +103,15 @@ class Eval2PickInBowlEnvCfg_v0_PLAY(Eval2PickInBowlEnvCfg_v0):
 # v1 — two adjacent colored blocks + open-top bowl, target color goal.
 # ===========================================================================
 def _make_colored_block_cfg(prim_name: str, init_pos: list[float], rgb: tuple[float, float, float]) -> RigidObjectCfg:
-    """Build a small colored cuboid block with rigid body physics."""
+    """Build a small colored cuboid block with rigid body physics.
+
+    Matches the team's real wooden cubes: 2x2x2 cm.
+    """
     return RigidObjectCfg(
         prim_path=f"{{ENV_REGEX_NS}}/{prim_name}",
         init_state=RigidObjectCfg.InitialStateCfg(pos=init_pos, rot=[1, 0, 0, 0]),
         spawn=sim_utils.CuboidCfg(
-            size=(0.025, 0.025, 0.025),  # 2.5 cm cube — matches dex_cube scaled 0.5
+            size=(0.020, 0.020, 0.020),  # 2 cm cube — matches the real wooden blocks
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 solver_position_iteration_count=16,
                 solver_velocity_iteration_count=1,
@@ -135,11 +138,16 @@ class Eval2PickInClutterEnvCfg_v1(PickInClutterEnvCfg):
         # Two blocks placed adjacent on the table at y = +/- 0.02 (4 cm apart).
         # The cluster center is at (0.20, 0.0); reset randomization in EventCfg
         # adds +/- 5 cm noise per axis.
+        # The two blocks are placed adjacent (touching) along the y axis to
+        # form the "flat cluster" required by the TA spec for Eval 2:
+        #   "Two blocks of different colors are placed adjacent to each other
+        #    (flat cluster)."
+        # Block edges meet at y=0; centers at y=+/- block_half (= 0.010 m).
         self.scene.block_red = _make_colored_block_cfg(
-            "BlockRed", init_pos=[0.20, 0.02, 0.0125], rgb=(0.85, 0.10, 0.10)
+            "BlockRed", init_pos=[0.20, 0.010, 0.010], rgb=(0.85, 0.10, 0.10)
         )
         self.scene.block_blue = _make_colored_block_cfg(
-            "BlockBlue", init_pos=[0.20, -0.02, 0.0125], rgb=(0.10, 0.20, 0.85)
+            "BlockBlue", init_pos=[0.20, -0.010, 0.010], rgb=(0.10, 0.20, 0.85)
         )
 
 

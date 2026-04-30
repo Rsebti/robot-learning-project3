@@ -28,20 +28,21 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
-from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
+from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from . import mdp
 
 
 # Bowl geometry (all in meters). The bowl center is at (BOWL_X, BOWL_Y, ~floor).
+# The real bowl on the team's setup is ~10-12 cm in inner diameter and holds
+# ~12 wooden cubes of 2x2x2 cm — we match that for sim-to-real alignment.
 BOWL_X = 0.30
 BOWL_Y = -0.20
-BOWL_INNER_HALF = 0.05  # 10x10 cm internal floor
+BOWL_INNER_HALF = 0.06  # 12x12 cm internal floor (>= 10 cm spec, + margin)
 BOWL_FLOOR_THICKNESS = 0.005
 BOWL_WALL_THICKNESS = 0.008
-BOWL_WALL_HEIGHT = 0.04
+BOWL_WALL_HEIGHT = 0.025  # ~ block height so blocks clear the rim with a small lift
 
 
 # ---------------------------------------------------------------------------
@@ -114,11 +115,24 @@ class PickInClutterSceneCfg(InteractiveSceneCfg):
     bowl_wall_yp: RigidObjectCfg = _bowl_wall_cfg("BowlWallYP", axis="y", sign=+1)
     bowl_wall_yn: RigidObjectCfg = _bowl_wall_cfg("BowlWallYN", axis="y", sign=-1)
 
-    # Standard Isaac Lab manipulation table.
+    # Table — primitive cuboid with the exact color specified by the TAs:
+    # "A light gray table (approximately #B8ADA9)" → RGB(184, 173, 169) = (0.722, 0.678, 0.663).
+    # Replaces the upstream USD lab table so we have full control over the
+    # color (UsdFileCfg.visual_material doesn't reliably override sub-prim
+    # materials baked into the SeattleLabTable USD).
+    # Same effective xy footprint as the upstream table (60 cm x 1 m after
+    # the 90deg z rotation), table top at z=0.
     table = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Table",
-        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.5, 0, 0], rot=[0.707, 0, 0, 0.707]),
-        spawn=UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd"),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.5, 0, -0.02], rot=[0.707, 0, 0, 0.707]),
+        spawn=sim_utils.CuboidCfg(
+            size=(1.0, 0.6, 0.04),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.722, 0.678, 0.663),  # #B8ADA9
+                metallic=0.0,
+            ),
+        ),
     )
 
     plane = AssetBaseCfg(
@@ -176,24 +190,14 @@ class EventCfg:
         params={"num_classes": 2},
     )
 
-    # Randomize the cluster position. Both blocks are reset to their default
-    # offsets but with the same xy noise applied — keeps them adjacent.
-    reset_block_red_position = EventTerm(
-        func=mdp.reset_root_state_uniform,
+    # Randomize the *cluster* of blocks together (same xy shift applied to
+    # both). Keeps them adjacent — required by the TA spec.
+    randomize_block_cluster = EventTerm(
+        func=mdp.reset_cluster_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.05, 0.05), "y": (-0.05, 0.05), "z": (0.0, 0.0)},
-            "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("block_red"),
-        },
-    )
-    reset_block_blue_position = EventTerm(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            "pose_range": {"x": (-0.05, 0.05), "y": (-0.05, 0.05), "z": (0.0, 0.0)},
-            "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("block_blue"),
+            "position_range": {"x": (-0.05, 0.05), "y": (-0.05, 0.05)},
+            "asset_names": ("block_red", "block_blue"),
         },
     )
 
@@ -202,34 +206,49 @@ class EventCfg:
 class RewardsCfg:
     """Dense reward shaping, target-aware."""
 
+    # Approach the target block (block size is 2.5 cm so std=0.05 is ~2 block widths).
     reaching_target = RewTerm(
         func=mdp.target_block_ee_distance_tanh,
         params={"std": 0.05},
         weight=1.0,
     )
 
-    lifting_target = RewTerm(
+    # Two-stage lifting: a low threshold to easily reward "block off the table",
+    # plus a higher one to reward "block clears the bowl rim". The low threshold
+    # is critical for early training — without it lifting_target plateaus at ~0
+    # because the policy never randomly clears 5 cm.
+    lifting_target_low = RewTerm(
         func=mdp.target_block_is_lifted,
-        params={"minimal_height": 0.05},  # higher than v0 — block must clear the bowl walls
-        weight=15.0,
+        params={"minimal_height": 0.025},  # ~ block height — easy to trigger
+        weight=10.0,
     )
 
+    lifting_target_high = RewTerm(
+        func=mdp.target_block_is_lifted,
+        params={"minimal_height": 0.05},  # block clears the bowl walls
+        weight=10.0,
+    )
+
+    # Bring the block toward the bowl. Gated on the LOW lift threshold so the
+    # policy gets reward as soon as it lifts and moves laterally.
     target_to_bowl_coarse = RewTerm(
         func=mdp.target_block_to_bowl_distance_tanh,
-        params={"std": 0.30, "minimal_height": 0.05},
+        params={"std": 0.30, "minimal_height": 0.025},
         weight=16.0,
     )
 
     target_to_bowl_fine = RewTerm(
         func=mdp.target_block_to_bowl_distance_tanh,
-        params={"std": 0.05, "minimal_height": 0.05},
+        params={"std": 0.05, "minimal_height": 0.025},
         weight=5.0,
     )
 
+    # Sparse success: block fully placed in the bowl. Boosted weight so this is
+    # the largest single contribution when achieved.
     success_bonus = RewTerm(
         func=mdp.target_block_in_bowl,
         params={"xy_threshold": BOWL_INNER_HALF, "z_max_above_bowl": 0.10},
-        weight=50.0,
+        weight=100.0,
     )
 
     # Discourage moving the wrong block.
