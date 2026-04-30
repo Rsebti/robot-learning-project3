@@ -398,7 +398,113 @@ tensorboard --logdir <isaac_so_arm101>/logs/rsl_rl/eval2_pick_in_bowl
 
 ---
 
-## 13. Liens utiles
+## 13. Que faire ensuite (par où continuer)
+
+5 chantiers possibles, classés par priorité / ROI. Tu peux les attaquer dans
+n'importe quel ordre, ils sont largement indépendants.
+
+### Piste A — Pousser v1.2 plus loin (le plus simple, ~30 min - 1 h)
+
+Le run baseline est arrêté à 1000 iter, encore en phase d'apprentissage actif
+(`action_noise_std` à 3.7 = exploration en cours). Trois leviers à essayer :
+
+**A.1 — Plus d'itérations** :
+```powershell
+uv run python -m sim.eval2.scripts.train \
+    --task Eval2-PickInClutter-v1 --headless --num_envs 4096 \
+    --max_iterations 5000
+```
+Si la courbe `success_bonus` continue de monter → on a juste manqué de temps.
+
+**A.2 — Boost du reward `target_to_bowl_fine`** :
+Dans `sim/eval2/pick_in_clutter_env_cfg.py`, augmenter le `weight` de
+`target_to_bowl_fine` de **5 à 15**. Force la policy à se concentrer sur la
+descente précise. Re-train.
+
+**A.3 — Curriculum sur le bowl rand** :
+Dans `EventCfg.randomize_bowl_position`, démarrer avec un range étroit
+(`x: (-0.01, 0.01), y: (-0.005, 0.005)`), entraîner 500 iter, puis élargir
+progressivement. Plus stable que d'attaquer la randomization complète d'un coup.
+
+### Piste B — Implémenter v2 (caméra + perception modulaire) ← le gros morceau
+
+C'est le **dernier vrai écart au PDF** ("policy must operate on visual observation
+of blocks"). Approche modulaire (autorisée par les TAs) : la policy reste
+state-based, mais les positions des blocs viennent d'un module de perception
+au lieu du ground-truth.
+
+**Étapes** :
+
+1. **Ajouter une `CameraCfg` à la scène**
+   Dans `sim/eval2/joint_pos_env_cfg.py`, à côté de `ee_frame`, ajouter :
+   ```python
+   from isaaclab.sensors import CameraCfg
+   self.scene.wrist_cam = CameraCfg(
+       prim_path="{ENV_REGEX_NS}/Robot/gripper_link/wrist_cam",
+       update_period=0.1,  # 10 Hz
+       width=84, height=84,
+       data_types=["rgb"],
+       spawn=sim_utils.PinholeCameraCfg(
+           focal_length=24.0, focus_distance=400.0,
+           horizontal_aperture=20.955,
+       ),
+       offset=CameraCfg.OffsetCfg(
+           pos=(0.05, 0.0, 0.0),  # à ajuster avec la pose réelle de la cam
+           rot=(0.5, -0.5, 0.5, -0.5),
+       ),
+   )
+   ```
+   ⚠️ Bug Blackwell connu : utiliser `Camera` standard, pas `TiledCamera`
+   (cf. `notes/isaac_lab_setup.md`).
+
+2. **Écrire un module de perception** dans `sim/eval2/perception/`
+   - Le plus simple : **HSV color filter** (OpenCV). Convertit RGB en HSV,
+     seuille sur les ranges rouge et bleu, calcule le centroid 2D pixel.
+   - Pour passer du pixel xy à xyz monde : **calibration extrinsèque
+     caméra-bras** (à mesurer une fois physiquement avec un ChAruco board).
+   - Alternative plus robuste : YOLOv8-tiny entraîné sur des renders sim.
+
+3. **Adapter les observations** dans `sim/eval2/mdp/observations.py`
+   Pendant le training en sim, on peut continuer à donner le ground-truth
+   (gratuit). On ajoute juste l'image en plus pour entraîner la perception
+   séparément. Au déploiement, on remplacera le ground-truth par la sortie
+   de la perception (mêmes shapes, mêmes ranges).
+
+### Piste C — Domain randomization (v3, sim-to-real)
+
+À faire en parallèle de la perception. Dans `EventCfg`, ajouter des events
+qui s'exécutent à chaque reset :
+- `randomize_block_colors` : tirer la teinte des deux blocs dans des plages
+  rouge/bleu plus larges
+- `randomize_table_friction` : varier le coefficient de frottement table-bloc
+- `randomize_lighting` : varier intensité et direction du `DomeLight`
+- `randomize_robot_initial_pose` : petite noise sur la pose home
+
+→ La policy entraînée sur ces variations devient robuste au transfert réel.
+
+### Piste D — Écrire le script de deploy au robot réel
+
+Voir section 15 pour le scaffolding. Tâches concrètes :
+1. Créer `deploy/eval2_inference.py` (s'inspirer de `deploy/inference.md` du
+   sanity check)
+2. Ajouter les flags CLI `--bowl_x --bowl_y --bowl_z --target_color --policy`
+3. Brancher la perception (à la place du ground-truth)
+4. Tester sur le SO-101 réel sur 5 rollouts
+
+### Piste E — Faire Eval 1 en parallèle (gains rapides, 50 pts)
+
+Eval 1 = single bloc + bowl, BC autorisé. Tu réutilises **exactement** le
+pipeline du sanity check, juste avec :
+- **50-100 démos teleop** au lieu de 20, en variant la position du bloc
+- Re-train ACT
+- Deploy
+
+C'est plus simple que de tout finir Eval 2, et ça vaut autant de points.
+**Si tu n'as qu'une journée au robot, fais Eval 1 d'abord.**
+
+---
+
+## 14. Liens utiles
 
 - TA spec PDF : [`notes/project3_rl_final_details.md`](../notes/project3_rl_final_details.md)
 - Plan de phase générale Eval 2 : [`notes/eval2_plan.md`](../notes/eval2_plan.md)
@@ -409,7 +515,7 @@ tensorboard --logdir <isaac_so_arm101>/logs/rsl_rl/eval2_pick_in_bowl
 
 ---
 
-## 14. TL;DR pour quelqu'un qui débarque
+## 15. TL;DR pour quelqu'un qui débarque
 
 1. Repo Eval 2 fonctionnel : structure complète + 4 tâches gym enregistrées
 2. v0, v1, v1.1, v1.2 entraînent en local sur RTX 5070 (~25 min pour 1000 iter à 4096 envs)
@@ -420,7 +526,7 @@ tensorboard --logdir <isaac_so_arm101>/logs/rsl_rl/eval2_pick_in_bowl
    bowl). Pistes : training plus long, boost reward fine, curriculum, BC warmstart.
 6. Reste à faire pour points : v2 caméra + perception modulaire + deploy au robot réel.
 
-## 15. Procédure deploy au robot réel (Eval 2 day)
+## 16. Procédure deploy au robot réel (Eval 2 day)
 
 Le PDF dit explicitement que la position du bowl et la couleur cible sont **fournies
 en input** par les TAs — pas à détecter visuellement. Le seul truc à percevoir, ce
