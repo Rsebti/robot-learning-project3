@@ -43,9 +43,9 @@ class PickInBowlSceneCfg(InteractiveSceneCfg):
     # Bowl approximated as a flat kinematic cylinder. We use a primitive
     # (vs. an external USD) so the prim has built-in RigidBodyAPI — Isaac Lab
     # requires it for any RigidObjectCfg, and YCB meshes don't ship with it.
-    # In v0 the bowl is at a fixed offset; v1+ will randomize the position.
-    bowl = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Bowl",
+    # Asset name is ``bowl_floor`` for symmetry with v1 (which uses 5 prims).
+    bowl_floor = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/BowlFloor",
         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.30, -0.20, 0.02], rot=[1, 0, 0, 0]),
         spawn=sim_utils.CylinderCfg(
             radius=0.05,
