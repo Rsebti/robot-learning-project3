@@ -138,11 +138,14 @@ class Eval2PickInClutterEnvCfg_v1(PickInClutterEnvCfg):
         # Two blocks placed adjacent on the table at y = +/- 0.02 (4 cm apart).
         # The cluster center is at (0.20, 0.0); reset randomization in EventCfg
         # adds +/- 5 cm noise per axis.
-        # The two blocks are placed adjacent (touching) along the y axis to
-        # form the "flat cluster" required by the TA spec for Eval 2:
+        # The two blocks form a "flat cluster" (TA spec for Eval 2:
         #   "Two blocks of different colors are placed adjacent to each other
-        #    (flat cluster)."
-        # Block edges meet at y=0; centers at y=+/- block_half (= 0.010 m).
+        #    (flat cluster)").
+        # Strict "touching" interpretation: blocks share a face at y=0, centers
+        # at y=+/- block_half (= 0.010 m). The cluster is aligned along y, so
+        # the gripper can still grasp either block by approaching perpendicular
+        # to the cluster line (along x): one finger in front of the target,
+        # one behind, without contacting the adjacent block.
         self.scene.block_red = _make_colored_block_cfg(
             "BlockRed", init_pos=[0.20, 0.010, 0.010], rgb=(0.85, 0.10, 0.10)
         )

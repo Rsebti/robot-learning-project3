@@ -45,7 +45,7 @@ class PickInBowlSceneCfg(InteractiveSceneCfg):
     # Asset name is ``bowl_floor`` for symmetry with v1 (which uses 5 prims).
     bowl_floor = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/BowlFloor",
-        init_state=RigidObjectCfg.InitialStateCfg(pos=[0.30, -0.20, 0.02], rot=[1, 0, 0, 0]),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=[0.20, -0.15, 0.02], rot=[1, 0, 0, 0]),
         spawn=sim_utils.CylinderCfg(
             radius=0.05,
             height=0.04,
@@ -62,12 +62,13 @@ class PickInBowlSceneCfg(InteractiveSceneCfg):
     )
 
     # Table — primitive cuboid with the exact spec color #B8ADA9.
-    # See pick_in_clutter_env_cfg.py for the rationale.
+    # See pick_in_clutter_env_cfg.py for the rationale (sized + positioned so
+    # the cluster + cluster-randomization stays on the table).
     table = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Table",
-        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.5, 0, -0.02], rot=[0.707, 0, 0, 0.707]),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.40, 0, -0.02]),
         spawn=sim_utils.CuboidCfg(
-            size=(1.0, 0.6, 0.04),
+            size=(0.80, 1.00, 0.04),
             collision_props=sim_utils.CollisionPropertiesCfg(),
             visual_material=sim_utils.PreviewSurfaceCfg(
                 diffuse_color=(0.722, 0.678, 0.663),  # #B8ADA9
@@ -226,5 +227,5 @@ class PickInBowlEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.render_interval = self.decimation
         self.sim.physx.bounce_threshold_velocity = 0.01
         self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
-        self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
+        self.sim.physx.gpu_total_aggregate_pairs_capacity = 64 * 1024  # see v1.1 note
         self.sim.physx.friction_correlation_distance = 0.00625

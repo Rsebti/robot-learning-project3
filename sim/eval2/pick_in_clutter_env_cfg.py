@@ -37,8 +37,11 @@ from . import mdp
 # Bowl geometry (all in meters). The bowl center is at (BOWL_X, BOWL_Y, ~floor).
 # The real bowl on the team's setup is ~10-12 cm in inner diameter and holds
 # ~12 wooden cubes of 2x2x2 cm — we match that for sim-to-real alignment.
-BOWL_X = 0.30
-BOWL_Y = -0.20
+# Position chosen to keep the bowl well within the SO-101's ~30 cm reach
+# from the robot base at the world origin: distance = sqrt(0.20^2 + 0.15^2)
+# = ~25 cm, with the cluster at (0.20, 0) sitting just to the +y side.
+BOWL_X = 0.20
+BOWL_Y = -0.15
 BOWL_INNER_HALF = 0.06  # 12x12 cm internal floor (>= 10 cm spec, + margin)
 BOWL_FLOOR_THICKNESS = 0.005
 BOWL_WALL_THICKNESS = 0.008
@@ -120,13 +123,19 @@ class PickInClutterSceneCfg(InteractiveSceneCfg):
     # Replaces the upstream USD lab table so we have full control over the
     # color (UsdFileCfg.visual_material doesn't reliably override sub-prim
     # materials baked into the SeattleLabTable USD).
-    # Same effective xy footprint as the upstream table (60 cm x 1 m after
-    # the 90deg z rotation), table top at z=0.
+    #
+    # Geometry: 80 cm (along x, robot reach axis) x 1 m (along y) x 4 cm thick.
+    # Centered at (0.40, 0) so the effective x extent is (0.0, 0.8). This puts
+    # the robot base at the near edge of the table, gives 20 cm clearance for
+    # the cluster at x=0.20 + the +/-5 cm cluster randomization, and keeps the
+    # bowl at (0.30, -0.20) well inside the table. Without this the upstream
+    # ~60 cm-wide footprint had the cluster sitting on the table edge and any
+    # negative xy noise would spawn the blocks off the table.
     table = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Table",
-        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.5, 0, -0.02], rot=[0.707, 0, 0, 0.707]),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.40, 0, -0.02]),
         spawn=sim_utils.CuboidCfg(
-            size=(1.0, 0.6, 0.04),
+            size=(0.80, 1.00, 0.04),
             collision_props=sim_utils.CollisionPropertiesCfg(),
             visual_material=sim_utils.PreviewSurfaceCfg(
                 diffuse_color=(0.722, 0.678, 0.663),  # #B8ADA9
@@ -306,5 +315,8 @@ class PickInClutterEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.render_interval = self.decimation
         self.sim.physx.bounce_threshold_velocity = 0.01
         self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
-        self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
+        # Bumped from 16K -> 64K because v1 has more prims per env (2 blocks +
+        # 5 bowl primitives + table + robot) and at 4096 envs we were seeing
+        # PhysX 'missing interactions' errors that stalled lifting in training.
+        self.sim.physx.gpu_total_aggregate_pairs_capacity = 64 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
