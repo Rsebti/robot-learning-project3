@@ -223,3 +223,8 @@ __marimo__/
 # Local-only assets (screenshots, project briefs)
 *.webp
 document_pdf.pdf
+
+# Perception module — heavy binaries and locally-generated previews
+sim/eval2/perception/data.pt
+sim/eval2/perception/checkpoint.pt
+sim/eval2/perception/preview/
