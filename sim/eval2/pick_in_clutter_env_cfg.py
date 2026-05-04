@@ -214,9 +214,7 @@ class EventCfg:
     # Randomize the bowl position too — TA spec: "Bowls placed at randomized
     # positions in the robot base frame". The same xy shift is applied to all
     # 5 bowl primitives so the bowl shape (floor + 4 walls) stays intact.
-    # Range kept modest in y to avoid overlap with the cluster (cluster can
-    # reach y=-0.05 with its own randomization; bowl at default y=-0.15 plus
-    # +0.02 max stays at -0.13 + 0.068 wall_top = -0.062 < cluster_min_y).
+    # Range kept modest in y to avoid overlap with the cluster.
     randomize_bowl_position = EventTerm(
         func=mdp.reset_cluster_uniform,
         mode="reset",
@@ -268,18 +266,23 @@ class RewardsCfg:
         weight=16.0,
     )
 
+    # BOOSTED for the long-convergence run: was 5.0. The fine-grained drop is
+    # the actual bottleneck (lifting + transport already work at iter ~500),
+    # so this term needs a louder voice to teach the policy to commit to a
+    # precise descent over the bowl.
     target_to_bowl_fine = RewTerm(
         func=mdp.target_block_to_bowl_distance_tanh,
         params={"std": 0.05, "minimal_height": 0.025},
-        weight=5.0,
+        weight=25.0,
     )
 
-    # Sparse success: block fully placed in the bowl. Boosted weight so this is
-    # the largest single contribution when achieved.
+    # Sparse success bonus. Boosted again so a single successful placement
+    # dominates the per-episode reward signal and PPO clearly prefers it over
+    # the 'stay near the bowl forever without releasing' local optimum.
     success_bonus = RewTerm(
         func=mdp.target_block_in_bowl,
         params={"xy_threshold": BOWL_INNER_HALF, "z_max_above_bowl": 0.10},
-        weight=100.0,
+        weight=200.0,
     )
 
     # Discourage moving the wrong block.
@@ -289,8 +292,15 @@ class RewardsCfg:
         weight=-5.0,
     )
 
-    # Smoothness penalties.
-    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-1e-4)
+    # Smoothness penalties + action magnitude regularization.
+    # action_rate (penalize abrupt changes between consecutive actions) was
+    # already there. action_l2 is NEW: it penalizes the magnitude of each
+    # action directly, so the actor mean is pulled toward small values
+    # instead of saturating the joint targets at +/-7.5 rad after the 0.5
+    # action scale. Without this, PPO has no direct pressure to keep actions
+    # in a sane range.
+    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-1e-3)
+    action_l2 = RewTerm(func=mdp.action_l2_norm, weight=-1e-2)
     joint_vel = RewTerm(
         func=mdp.joint_vel_l2,
         weight=-1e-4,

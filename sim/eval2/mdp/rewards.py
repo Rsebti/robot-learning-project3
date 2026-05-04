@@ -175,3 +175,16 @@ def distractor_block_disturbed(
     """
     distractor_pos_w = _distractor_block_pos(env)
     return torch.where(distractor_pos_w[:, 2] > height_threshold, 1.0, 0.0)
+
+
+def action_l2_norm(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """L2 norm of the last action, per env (shape: (num_envs,)).
+
+    Pairs with a *negative* weight in ``RewardsCfg`` to discourage the actor
+    from learning very large action magnitudes. Without this, the previous
+    1k-iter run drove the actor mean to ~+/-15, which after the 0.5 action
+    scale saturates the joint targets at ~+/-7.5 rad — well past joint
+    limits — and prevents the policy from refining a real solution.
+    """
+    actions = env.action_manager.action  # (num_envs, action_dim)
+    return torch.linalg.norm(actions, dim=-1)

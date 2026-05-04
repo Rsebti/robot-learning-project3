@@ -267,6 +267,54 @@ Files (`sim/eval2/perception/`) :
      bougera le bras de la même façon).
    - Pas besoin de calibrer une scan pose.
 
+### v1.3 — convergence run overnight (en cours, mise à jour 2026-05-04 23h)
+
+**Diagnostic post-deploy** : en lançant le checkpoint v1.2 dans le pipeline complet
+(`deploy/eval2_inference.py`), on a découvert que **la policy v1.2 n'est PAS
+convergée**. Le checkpoint contient un `std` énorme (~3.7) — le PPO explorait
+encore massivement à iter 999. Les "7.46% success" du training sont obtenus
+PAR HASARD via l'exploration aléatoire (mean × bruit), pas par une policy
+qui a appris la tâche. En mode déterministe (act_inference, sans bruit) ou
+même en sampling, le success rate retombe à 0%.
+
+**Cause racine** : sans pénalité explicite sur la magnitude des actions, le
+gradient PPO a poussé `mean` vers ±15 (= joints saturés à ±7.5 rad après le
+scale 0.5). La reward landscape ne pouvait plus distinguer les bonnes des
+mauvaises actions → `std` n'a jamais convergé.
+
+**Modifs config v1.3** :
+| Aspect | v1.2 | v1.3 |
+|---|---|---|
+| `target_to_bowl_fine` weight | 5 | **25** (forcer placement précis) |
+| `success_bonus` weight | 100 | **200** (signal de réussite plus fort) |
+| `action_rate_l2` weight | -1e-4 | **-1e-3** (smoothness 10× plus forte) |
+| **`action_l2_norm` reward (NEW)** | absent | **-1e-2** (empêche actions saturées) |
+| `init_noise_std` | 1.0 | **0.5** (start moins explorateur) |
+| `entropy_coef` | 0.006 | inchangé (défaut stable) |
+| `max_iterations` | 1000 | **20 000** (8-10h overnight) |
+| `save_interval` | 100 | 500 (40 checkpoints sur 20k) |
+| Bowl rand | ±4 cm x, ±2 cm y | inchangé |
+
+**Cible** : success rate sim ≥ 70 %, idéalement 90 %+, avec `std` < 0.5
+en fin de training (= policy convergée, déployable en mode déterministe).
+
+**Commande** :
+```powershell
+uv run python -m sim.eval2.scripts.train --task Eval2-PickInClutter-v1 \
+    --headless --num_envs 4096 --max_iterations 20000
+```
+
+(On entraîne sur **v1**, PAS v2 : v2 ne diffère que par la cam dans la scène,
+qui ne change rien à la policy state-based mais ralentit le training de 3-5×.)
+
+**Note importante pour la suite** : si v1.3 converge, on devra re-capturer
+le dataset de perception avec ce nouveau checkpoint (la distribution de
+viewpoints sera très différente : moins chaotique, plus représentative du
+vrai déploiement). Le CNN actuel a été entraîné sur des viewpoints issus
+de la policy v1.2 chaotique → biais hérité.
+
+---
+
 **Status au 2026-05-04 — v2 perception ENTRAÎNÉE ✅** :
 
 - ✅ `capture_with_policy.py` écrit. Charge le checkpoint v1.2 hardcodé :
@@ -657,34 +705,40 @@ C'est plus simple que de tout finir Eval 2, et ça vaut autant de points.
 
 ## 15. TL;DR pour quelqu'un qui débarque
 
-État au **2026-05-04** :
+État au **2026-05-04 fin de soirée** :
 
-1. **v0, v1, v1.1, v1.2 RL state-based** : tous fonctionnels.
-   `Eval2-PickInClutter-v1` à 1000 iter sur 4096 envs RTX 5070 → **success rate 7.46 %**.
-2. **v2 (caméra wrist)** : caméra présente dans la scène, calibrée pour une scan pose
-   spécifique. Tâches `Eval2-PickInClutter-v2` et `Eval2-PickInClutter-Play-v2`
-   enregistrées. **Lance toujours avec `--enable_cameras`** sinon Isaac Lab désactive
-   silencieusement le rendu cam.
-3. **Module perception CNN ENTRAÎNÉ ✅** : architecture `ColorBlockCNN`
-   + pipeline `capture_with_policy.py` (rollout du checkpoint v1.2 dans
-   v2 avec camera, capture image+GT à chaque step) → `train.py`
-   (30 epochs, ~2 min sur 5070). **Best val MAE 0.87 cm** par
-   coordonnée — sous le seuil cible de 1.5 cm. Le dataset couvre la
-   vraie distribution de viewpoints du déploiement. Checkpoint à
-   `sim/eval2/perception/checkpoint.pt` (gitignored — regénérer avec
-   les commandes section 5).
-4. **Toute la spec PDF est implémentée** sauf : (a) observation visuelle pleinement
-   intégrée à la policy (v2 perception en cours), (b) domain randomization (v3 prévu).
-5. Goulot RL actuel : `target_to_bowl_fine` (descente précise au-dessus du bowl).
-   Pistes : training plus long (3000 iter+), boost reward fine, BC warmstart.
-6. **Reste à faire pour points Eval 2** :
-   - ~~Débloquer dataset perception~~ ✅ fait (rollout v1.2)
-   - ~~Entraîner CNN~~ ✅ fait (val_mae 0.87 cm)
-   - **Écrire `deploy/eval2_inference.py`** (mirror du sanity check
-     inference, mais branche la perception entre la cam et la policy)
-   - **Domain randomization v3** (pour le sim-to-real des couleurs /
-     lumière) si le deploy donne de mauvais résultats au robot réel
-   - Test sur le vrai SO-101 sur 5 rollouts
+1. **v0, v1, v1.1, v1.2 RL state-based** : tous fonctionnels mais le
+   **checkpoint v1.2 N'EST PAS DÉPLOYABLE** — diagnostiqué via le
+   pipeline complet `deploy/eval2_inference.py`. Le success rate
+   "7.46 %" reporté pendant le training vient de l'exploration
+   stochastique (PPO sample mean+noise avec std≈3.7), pas d'une vraie
+   policy convergée. En mode déploiement (déterministe ou même
+   sampling), le success rate retombe à 0 % parce que la policy n'a
+   jamais appris à exploiter — elle ne fait qu'explorer.
+2. **v1.3 EN TRAINING (overnight, ~20k iter)** : nouvelle config qui
+   ajoute une pénalité `action_l2` pour empêcher les actions saturées,
+   booste les rewards de placement précis, et tourne 20× plus long.
+   Cible : `std` < 0.5 et success rate ≥ 70 % en mode déterministe.
+3. **v2 (caméra wrist)** : caméra présente dans la scène, calibrée. Tâches
+   `Eval2-PickInClutter-{,Play-}v2` enregistrées. **Lance toujours avec
+   `--enable_cameras`**.
+4. **Module perception CNN ENTRAÎNÉ ✅** : `ColorBlockCNN` à val_mae 0.87 cm
+   sur le dataset capturé. **MAIS** : ce dataset vient de la policy v1.2
+   chaotique. Si v1.3 converge, **il faudra recapturer + retrain le CNN**
+   avec la nouvelle distribution de viewpoints (plus propre, plus
+   représentative).
+5. **`deploy/eval2_inference.py` ÉCRIT ✅** : pipeline complet qui charge
+   policy + CNN, lit la cam wrist, substitue la perception aux positions
+   GT dans l'obs, fait tourner la policy. A permis le diagnostic v1.2.
+6. **Pipeline complet à valider quand v1.3 sera prête** :
+   - Récupérer le meilleur checkpoint v1.3
+   - Recapture dataset perception avec `capture_with_policy.py`
+   - Retrain CNN
+   - Re-test `deploy/eval2_inference.py` avec et sans `--use_ground_truth`
+7. **Reste à faire après ça pour points Eval 2** :
+   - **Domain randomization v4** (couleurs / textures / lumière) pour
+     sim-to-real
+   - **Test sur le vrai SO-101** : 5 rollouts au laboratoire
 
 ## 16. Procédure deploy au robot réel (Eval 2 day)
 
