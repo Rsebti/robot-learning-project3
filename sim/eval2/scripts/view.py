@@ -42,6 +42,17 @@ parser.add_argument("--elbow_flex",    type=float, default=None)
 parser.add_argument("--wrist_flex",    type=float, default=None)
 parser.add_argument("--wrist_roll",    type=float, default=None)
 parser.add_argument("--gripper",       type=float, default=None)
+parser.add_argument(
+    "--no_lock",
+    action="store_true",
+    help=(
+        "Disable the per-frame joint state rewrite. Pair with Isaac Sim's "
+        "Pause button (or rely on the auto sim.pause() call) so the robot "
+        "stays where you put it while you edit joint targets in the "
+        "Property panel ('drive: angular: target position'). When you have "
+        "a pose you like, copy the 6 joint values and hardcode them."
+    ),
+)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 
@@ -131,28 +142,55 @@ def main():
 
     sim = env.unwrapped.sim
 
-    # Freeze the world AT the scan pose. To prevent the internal joint
-    # controllers from drifting the robot back toward the home pose between
-    # frames, we re-write the joint state at every iteration of the render
-    # loop. Effectively the pose is "force-locked" — Isaac Sim still ticks
-    # the kit app for rendering / UI, but the robot can never move.
-    print("\n" + "=" * 60)
-    print(" Scene loaded. Robot LOCKED to scan pose.")
-    print(" - Robot stays exactly where you put it (re-written every frame).")
-    print(" - Edit prims (e.g. wrist_cam) freely in the Property panel.")
-    print(" - Switch viewport camera via the top-left dropdown.")
-    print(" Close the window or Ctrl+C to quit.")
-    print("=" * 60 + "\n")
+    # Initial pose: write once before the render loop in both modes so the
+    # scene starts at the desired scan pose.
+    robot.write_joint_state_to_sim(target_pos, target_vel)
+    robot.set_joint_position_target(target_pos)
+    robot.write_data_to_sim()
 
-    while simulation_app.is_running():
-        # 1) Force the joint state and the controller targets to the desired
-        #    scan pose. Doing this every frame undoes any drift introduced
-        #    by Isaac Sim's internal physics tick.
-        robot.write_joint_state_to_sim(target_pos, target_vel)
-        robot.set_joint_position_target(target_pos)
-        robot.write_data_to_sim()
-        # 2) Tick the kit app so the render reflects the newly written state.
-        simulation_app.update()
+    if args.no_lock:
+        # Interactive joint-editing mode: pause physics and let the user
+        # tweak joint targets via Isaac Sim's Property panel
+        # (Stage > Robot > joints > <joint> > drive: angular: target position).
+        # Without sim.pause() the controllers would fight the user's edits
+        # and drift the robot back to whatever target was set programmatically.
+        try:
+            sim.pause()
+        except Exception:  # noqa: BLE001
+            pass  # if pause isn't supported, fall back to render-only loop
+        print("\n" + "=" * 60)
+        print(" Interactive mode (--no_lock). Physics PAUSED.")
+        print(" - Robot is at the initial scan pose.")
+        print(" - Edit joints in Property panel:")
+        print("     Stage panel  ->  Robot  ->  joints  ->  <joint>")
+        print("     Property panel  ->  drive: angular: target position")
+        print(" - When you find a pose you like, note the 6 joint values")
+        print("   and pass them via CLI (--shoulder_lift X --elbow_flex Y ...)")
+        print("   on the next launch, OR hardcode them in SCAN_POSE_JOINTS.")
+        print(" - Bascule sur 'wrist_cam' dans le dropdown camera pour")
+        print("   verifier la vue depuis le poignet.")
+        print(" Close the window or Ctrl+C to quit.")
+        print("=" * 60 + "\n")
+        while simulation_app.is_running():
+            simulation_app.update()
+    else:
+        # Force-lock mode (default): re-write the joint state every frame
+        # so internal PD controllers can't drift the robot away from the
+        # requested pose. Use this when you've already found the pose you
+        # like and just want to inspect it / position the camera.
+        print("\n" + "=" * 60)
+        print(" Lock mode. Robot LOCKED to scan pose every frame.")
+        print(" - Robot stays exactly where you put it (re-written each frame).")
+        print(" - Edit prims (e.g. wrist_cam) freely in the Property panel.")
+        print(" - Switch viewport camera via the top-left dropdown.")
+        print(" - To edit joints interactively, relaunch with --no_lock.")
+        print(" Close the window or Ctrl+C to quit.")
+        print("=" * 60 + "\n")
+        while simulation_app.is_running():
+            robot.write_joint_state_to_sim(target_pos, target_vel)
+            robot.set_joint_position_target(target_pos)
+            robot.write_data_to_sim()
+            simulation_app.update()
 
     env.close()
 
