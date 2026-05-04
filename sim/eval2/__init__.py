@@ -58,3 +58,28 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+# ---------------------------------------------------------------------------
+# v2 — v1 + SO-101 wrist camera in the scene (RGB).
+# Used for visual development, perception module training/validation, and
+# real-robot deploy (where the camera obs is consumed live).
+# ---------------------------------------------------------------------------
+gym.register(
+    id="Eval2-PickInClutter-v2",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.joint_pos_env_cfg:Eval2PickInClutterEnvCfg_v2",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:Eval2PPORunnerCfg",
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Eval2-PickInClutter-Play-v2",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.joint_pos_env_cfg:Eval2PickInClutterEnvCfg_v2_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:Eval2PPORunnerCfg",
+    },
+    disable_env_checker=True,
+)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
+from isaaclab.sensors import CameraCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import (
     FrameTransformerCfg,
     OffsetCfg,
@@ -22,7 +23,10 @@ from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
 
 from . import mdp
 from .pick_env_cfg import PickInBowlEnvCfg
-from .pick_in_clutter_env_cfg import PickInClutterEnvCfg
+from .pick_in_clutter_env_cfg import (
+    PickInClutterEnvCfg,
+    PickInClutterSceneCfgWithCam,
+)
 
 
 # Common SO-101 wiring shared between v0 and v1.
@@ -157,6 +161,91 @@ class Eval2PickInClutterEnvCfg_v1(PickInClutterEnvCfg):
 @configclass
 class Eval2PickInClutterEnvCfg_v1_PLAY(Eval2PickInClutterEnvCfg_v1):
     """Play config: same task with fewer envs and no observation noise."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+# ===========================================================================
+# v2 — same as v1 with the SO-101 wrist camera mounted on wrist_roll_link.
+#
+# Camera placement is the placeholder from TheRobotStudio's official
+# Wrist_Cam_Mount_32x32_UVC_Module spec (4 cm forward, 3 cm up, 90 deg yaw
+# to point optical axis along link's x-forward, 12 deg downward pitch).
+# Quaternion (w, x, y, z) computed from those Euler angles.
+# Sensor specs match the LeRobot real-robot config (UVC 32x32 module at
+# 640x480 @ 30 fps), but we render at lower resolution by default to keep
+# PhysX + render throughput tractable on the Blackwell-bug-affected RTX
+# 5070 (CameraCfg uses the standard Camera, not TiledCamera, since the
+# tiled variant hangs on sm_120).
+# ===========================================================================
+
+
+@configclass
+class Eval2PickInClutterEnvCfg_v2(Eval2PickInClutterEnvCfg_v1):
+    """v1 task + wrist camera. We override ``scene`` to use the camera-aware
+    scene cfg (PickInClutterSceneCfgWithCam) and fill the camera in __post_init__.
+    Single-line inheritance from v1 (no diamond) to keep configclass MRO simple.
+    """
+
+    scene: PickInClutterSceneCfgWithCam = PickInClutterSceneCfgWithCam(
+        num_envs=4096, env_spacing=2.5
+    )
+
+    def __post_init__(self):
+        # Run v1's __post_init__ to fill robot, ee_frame, blocks, gripper action.
+        super().__post_init__()
+
+        # Hide the ee_frame XYZ gizmo in v2 — it blocks the wrist camera's view
+        # because the camera is mounted right where the gizmo is anchored.
+        # The gizmo stays useful in v1 (third-person inspection) so we only
+        # disable it on v2.
+        self.scene.ee_frame.debug_vis = False
+
+        # Wrist camera mounted on gripper_link (= the link downstream of the
+        # wrist_roll joint in this URDF; the mount STL the doc references is
+        # part of this very link).
+        #
+        # Offset was tuned interactively in the Isaac Sim Property panel
+        # while the robot was held in a "scan" pose (gripper hovering above
+        # the workspace pointing down). Final values that frame both blocks
+        # and the bowl correctly:
+        #   Translate  (-0.02208,  0.05825,  0.03013)  meters
+        #   Orient XYZ (-15.544,  -9.931,   -90.069)   degrees
+        #
+        # The Euler angles converted to a (w, x, y, z) quaternion (intrinsic
+        # XYZ convention) are below. Calibrate against the real wrist mount
+        # before any serious sim-to-real attempt.
+        self.scene.wrist_cam = CameraCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/gripper_link/wrist_cam",
+            update_period=0.1,           # 10 Hz — easier on rendering than 30 Hz
+            height=240,
+            width=320,
+            data_types=["rgb"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=24.0,
+                focus_distance=400.0,
+                horizontal_aperture=20.955,
+                clipping_range=(0.1, 1.0e5),
+            ),
+            offset=CameraCfg.OffsetCfg(
+                pos=(-0.02208, 0.05825, 0.03013),
+                rot=(0.70586, -0.03453, -0.15594, -0.69009),  # Euler XYZ (-15.544, -9.931, -90.069) deg
+                # "opengl" = no convention transform applied, our quaternion
+                # is written directly to the prim's xformOp:orient. This way
+                # the values we hardcode match 1:1 what the user tuned in the
+                # Isaac Sim Property panel.
+                convention="opengl",
+            ),
+        )
+
+
+@configclass
+class Eval2PickInClutterEnvCfg_v2_PLAY(Eval2PickInClutterEnvCfg_v2):
+    """Play config for v2: fewer envs, no observation noise."""
 
     def __post_init__(self):
         super().__post_init__()

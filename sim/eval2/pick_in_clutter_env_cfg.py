@@ -27,6 +27,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import CameraCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg
 from isaaclab.utils import configclass
@@ -341,3 +342,38 @@ class PickInClutterEnvCfg(ManagerBasedRLEnvCfg):
         # PhysX 'missing interactions' errors that stalled lifting in training.
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 64 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
+
+
+# ===========================================================================
+# v2 — same as v1, plus the SO-101 wrist camera (RGB).
+#
+# We keep v1 (state-based, fast) as the production training task and add v2
+# specifically for: (a) visual development / debug, (b) training the perception
+# module against ground-truth, (c) the real-robot deploy script (which mirrors
+# the wrist cam observation 1:1 with the live SO-101 camera).
+#
+# Camera mounting follows TheRobotStudio's official Wrist_Cam_Mount_32x32_UVC
+# placeholder values: ~4 cm forward, ~3 cm up of the wrist_roll_link, looking
+# forward with a 12 deg downward pitch. To be remeasured / calibrated before
+# any serious sim-to-real attempt (see the team doc).
+# ===========================================================================
+
+
+@configclass
+class PickInClutterSceneCfgWithCam(PickInClutterSceneCfg):
+    """v1 scene + a wrist-mounted camera. Camera prim is filled by the
+    robot-specific subclass so that the placeholder for ``robot.prim_path``
+    can be substituted into the camera's prim_path.
+    """
+
+    wrist_cam: CameraCfg = MISSING
+
+
+@configclass
+class PickInClutterEnvCfgV2(PickInClutterEnvCfg):
+    """Same managers/rewards/events as v1 (training stays state-based and
+    fast). The only structural change is the scene gains a wrist camera."""
+
+    scene: PickInClutterSceneCfgWithCam = PickInClutterSceneCfgWithCam(
+        num_envs=4096, env_spacing=2.5
+    )
