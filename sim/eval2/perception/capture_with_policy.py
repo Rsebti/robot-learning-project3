@@ -129,6 +129,13 @@ def main():
             actions = policy(obs)
         obs, _, _, _ = env_wrapped.step(actions)
 
+        # The wrist camera has update_period=0.1s in the env config but each
+        # env.step only advances ~0.02s of sim time, so by default the
+        # camera buffer would only refresh once every 5 steps — meaning
+        # 4 of every 5 captured frames would be identical. Force-refresh
+        # the camera output here by passing a dt > update_period.
+        wrist_cam.update(dt=1.0)
+
         # --- camera image (resized to image_size square) ---
         rgb = wrist_cam.data.output["rgb"]  # (num_envs, H, W, 3 or 4)
         if rgb is None:

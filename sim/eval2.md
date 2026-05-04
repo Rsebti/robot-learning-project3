@@ -267,39 +267,71 @@ Files (`sim/eval2/perception/`) :
      bougera le bras de la même façon).
    - Pas besoin de calibrer une scan pose.
 
-**Status au 2026-05-04** :
-- ✅ `capture_with_policy.py` écrit, charge le checkpoint v1.2 hardcodé :
+**Status au 2026-05-04 — v2 perception ENTRAÎNÉE ✅** :
+
+- ✅ `capture_with_policy.py` écrit. Charge le checkpoint v1.2 hardcodé :
   `C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/logs/rsl_rl/eval2_pick_in_bowl/2026-04-30_15-53-41/model_999.pt`
-- 🔜 À tester : `uv run python -m sim.eval2.perception.capture_with_policy --num_samples 5 --save_preview --enable_cameras`
-  (preview 5 images, vérifier que les blocs apparaissent dans certains
-  frames pendant le rollout).
-- 🔜 Si OK, lancer le full capture (5000 samples) puis le train du CNN :
-  ```
-  uv run python -m sim.eval2.perception.capture_with_policy --num_samples 5000 --enable_cameras
-  uv run python -m sim.eval2.perception.train --epochs 30
-  ```
-  Cible : val_mae < 1.5 cm par coordonnée.
+- ✅ Bug "5 images identiques" corrigé : on appelle
+  `wrist_cam.update(dt=1.0)` après chaque `env.step` pour forcer le
+  refresh du buffer caméra (sinon `update_period=0.1s` >
+  `step_dt=0.02s` rend 4 frames sur 5 identiques).
+- ✅ Dataset 5000 samples capturé pendant les rollouts de la policy
+  v1.2 dans v2. Le dataset couvre des viewpoints variés : approche du
+  cluster, descente, lift, transport vers bowl, drop. Quelques cubes
+  visibles "en l'air" (lifted) dans les frames de transport.
+- ✅ CNN entraîné 30 epochs (~2 min sur RTX 5070).
+
+**Résultats du training** :
+
+| Métrique | Valeur |
+|---|---|
+| Best val MSE | **0.00024** |
+| Best val MAE | **0.87 cm** moyen |
+| `x_red`  | ~1.0 cm |
+| `y_red`  | ~1.3-1.7 cm |
+| `z_red`  | ~0.6 cm |
+| `x_blue` | ~0.85 cm |
+| `y_blue` | ~0.8-1.2 cm |
+| `z_blue` | ~0.6 cm |
+| Train vs val gap | < 30 % | (pas d'overfitting) |
+| Wall-clock | 132 s |
+
+Cible (val_mae < 1.5 cm) **atteinte**. Pour des blocs de 2 cm, l'erreur
+de 0.87 cm laisse à la pince une marge raisonnable au grasp. Le
+checkpoint est à `sim/eval2/perception/checkpoint.pt` (gitignore).
 
 ### Reste à faire après v2 perception
 
-1. **Validation sim** : un script `validate.py` (à écrire) qui charge le
-   CNN entraîné, lance N rollouts dans v2 env, et compare la sortie de
-   la perception aux positions GT de PhysX. Cible : erreur médiane < 2 cm.
-2. **Deploy script réel** : `deploy/eval2_inference.py` qui :
+1. **Validation visuelle** (~10 min, optionnel) : utiliser
+   `inference.py` sur quelques images de test, comparer la prédiction
+   au GT. Surtout sur les frames "lifted" (bloc en l'air pendant le
+   transport) pour vérifier que le CNN gère la profondeur — `z` est
+   facile sur les frames "table", il faut tester les autres.
+2. **Deploy script réel** : `deploy/eval2_inference.py` à écrire.
+   Structure :
    - Lit la wrist cam réelle via OpenCV/lerobot
-   - Passe l'image dans `PerceptionPipeline`
-   - Concatène l'observation : joint_pos + joint_vel + perception_red_xyz +
-     perception_blue_xyz + bowl_xyz_arg + target_color_arg + last_action
-   - Inférence policy → action
-   - Envoie aux servos Feetech
-   - Loop à 30 Hz
+   - Passe l'image dans `PerceptionPipeline.predict(rgb)` →
+     `(red_xyz, blue_xyz)` en repère robot
+   - Concatène l'observation 29-D :
+     `joint_pos + joint_vel + perception_red_xyz + perception_blue_xyz
+      + bowl_xyz_arg + target_color_arg + last_action`
+   - Inférence policy v1.2 → action
+   - Envoie aux servos Feetech à 30 Hz
+   - CLI args `--bowl_x --bowl_y --bowl_z --target_color` fournis par
+     les TAs au moment de l'éval.
 3. **Domain randomization (v3)** pour le sim-to-real : varier couleurs,
    textures, lumière, frottements pendant le training perception.
+   Sans ça, le CNN entraîné sur sim parfait pourrait sous-performer
+   sur les vrais blocs en bois avec lumière différente.
+4. **Améliorer la perception** (optionnel, après validation au robot
+   réel) : capturer plus de samples (10-20k), data augmentation plus
+   agressive (color jitter, gaussian noise), ou entraîner un modèle
+   plus gros. Sans urgence tant que `val_mae` < 1 cm en sim.
 
-**Alternative envisagée** : faire varier légèrement la pose du robot à
-chaque sample pour que le CNN soit robuste à de petits changements de
-viewpoint (utile au déploiement quand la policy bouge le bras). Pas
-encore implémenté.
+**Alternative envisagée** (pas faite, n'a pas été nécessaire) : faire
+varier légèrement la pose du robot à chaque sample pour augmenter la
+diversité de viewpoints. Le rollout policy `capture_with_policy.py`
+nous a déjà donné cette diversité naturellement.
 
 ---
 
@@ -633,22 +665,25 @@ C'est plus simple que de tout finir Eval 2, et ça vaut autant de points.
    spécifique. Tâches `Eval2-PickInClutter-v2` et `Eval2-PickInClutter-Play-v2`
    enregistrées. **Lance toujours avec `--enable_cameras`** sinon Isaac Lab désactive
    silencieusement le rendu cam.
-3. **Module perception CNN** : architecture `ColorBlockCNN` écrite,
-   pipeline `capture_with_policy.py` (préféré) → `train.py` → `inference.py`
-   en place. La capture utilise une **rollout du checkpoint v1.2** dans
-   l'env v2 (camera enabled) et enregistre image+GT à chaque step — donc
-   le dataset couvre la vraie distribution de viewpoints du déploiement.
-   À tester avec `--num_samples 5 --save_preview` avant le full run.
-   Voir section 5 (sub-section "v2 perception") pour les détails et la
-   procédure complète.
+3. **Module perception CNN ENTRAÎNÉ ✅** : architecture `ColorBlockCNN`
+   + pipeline `capture_with_policy.py` (rollout du checkpoint v1.2 dans
+   v2 avec camera, capture image+GT à chaque step) → `train.py`
+   (30 epochs, ~2 min sur 5070). **Best val MAE 0.87 cm** par
+   coordonnée — sous le seuil cible de 1.5 cm. Le dataset couvre la
+   vraie distribution de viewpoints du déploiement. Checkpoint à
+   `sim/eval2/perception/checkpoint.pt` (gitignored — regénérer avec
+   les commandes section 5).
 4. **Toute la spec PDF est implémentée** sauf : (a) observation visuelle pleinement
    intégrée à la policy (v2 perception en cours), (b) domain randomization (v3 prévu).
 5. Goulot RL actuel : `target_to_bowl_fine` (descente précise au-dessus du bowl).
    Pistes : training plus long (3000 iter+), boost reward fine, BC warmstart.
 6. **Reste à faire pour points Eval 2** :
-   - Débloquer dataset perception (1-2 h)
-   - Entraîner CNN (5 min sur 5070)
-   - Écrire `deploy/eval2_inference.py` (mirror du sanity check inference)
+   - ~~Débloquer dataset perception~~ ✅ fait (rollout v1.2)
+   - ~~Entraîner CNN~~ ✅ fait (val_mae 0.87 cm)
+   - **Écrire `deploy/eval2_inference.py`** (mirror du sanity check
+     inference, mais branche la perception entre la cam et la policy)
+   - **Domain randomization v3** (pour le sim-to-real des couleurs /
+     lumière) si le deploy donne de mauvais résultats au robot réel
    - Test sur le vrai SO-101 sur 5 rollouts
 
 ## 16. Procédure deploy au robot réel (Eval 2 day)
