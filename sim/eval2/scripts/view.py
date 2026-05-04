@@ -33,6 +33,15 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("--task", type=str, default="Eval2-PickInClutter-v1")
 parser.add_argument("--num_envs", type=int, default=1)
+# Per-joint overrides (in radians). If unset, the value from SCAN_POSE_JOINTS
+# below is used. Convenient for dialing in the scan pose interactively:
+#     uv run python -m sim.eval2.scripts.view ... --shoulder_lift 1.4 --elbow_flex -2.0 --wrist_flex 1.0
+parser.add_argument("--shoulder_pan",  type=float, default=None)
+parser.add_argument("--shoulder_lift", type=float, default=None)
+parser.add_argument("--elbow_flex",    type=float, default=None)
+parser.add_argument("--wrist_flex",    type=float, default=None)
+parser.add_argument("--wrist_roll",    type=float, default=None)
+parser.add_argument("--gripper",       type=float, default=None)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 
@@ -92,30 +101,57 @@ def main():
     # whatever is in SO_ARM101_CFG.
     robot = env.unwrapped.scene["robot"]
     joint_names = robot.data.joint_names
+    print(f"\n[view.py] Robot joint names ({len(joint_names)}): {joint_names}")
+
+    # Build effective scan pose: dict + per-joint CLI overrides.
+    effective_pose = dict(SCAN_POSE_JOINTS)
+    cli_overrides = {
+        "shoulder_pan":  args.shoulder_pan,
+        "shoulder_lift": args.shoulder_lift,
+        "elbow_flex":    args.elbow_flex,
+        "wrist_flex":    args.wrist_flex,
+        "wrist_roll":    args.wrist_roll,
+        "gripper":       args.gripper,
+    }
+    for name, val in cli_overrides.items():
+        if val is not None:
+            effective_pose[name] = val
+
     target_pos = torch.zeros(args.num_envs, len(joint_names), device="cuda:0")
     for i, name in enumerate(joint_names):
-        if name in SCAN_POSE_JOINTS:
-            target_pos[:, i] = SCAN_POSE_JOINTS[name]
-    target_vel = torch.zeros_like(target_pos)
-    robot.write_joint_state_to_sim(target_pos, target_vel)
+        if name in effective_pose:
+            target_pos[:, i] = effective_pose[name]
 
-    # Freeze the world: don't step physics. Just render frames so the user
-    # can pan around, edit prim transforms in the Property panel, and watch
-    # those edits update live without anything else moving.
+    print(f"[view.py] effective pose (rad):")
+    for name, val in effective_pose.items():
+        marker = " <-- CLI" if cli_overrides.get(name) is not None else ""
+        print(f"   {name:<14} = {val:+.3f}{marker}")
+
+    target_vel = torch.zeros_like(target_pos)
+
+    sim = env.unwrapped.sim
+
+    # Freeze the world AT the scan pose. To prevent the internal joint
+    # controllers from drifting the robot back toward the home pose between
+    # frames, we re-write the joint state at every iteration of the render
+    # loop. Effectively the pose is "force-locked" — Isaac Sim still ticks
+    # the kit app for rendering / UI, but the robot can never move.
     print("\n" + "=" * 60)
-    print(" Scene loaded. Physics is PAUSED.")
-    print(" - Robot is in 'scan' pose: gripper above workspace, pointing down.")
-    print(" - To change: edit SCAN_POSE_JOINTS at top of view.py.")
+    print(" Scene loaded. Robot LOCKED to scan pose.")
+    print(" - Robot stays exactly where you put it (re-written every frame).")
     print(" - Edit prims (e.g. wrist_cam) freely in the Property panel.")
     print(" - Switch viewport camera via the top-left dropdown.")
     print(" Close the window or Ctrl+C to quit.")
     print("=" * 60 + "\n")
 
-    # Render-only loop — no physics step.
     while simulation_app.is_running():
-        # ``simulation_app.update()`` advances the kit app one frame
-        # (renders, processes UI events) without ticking the physics
-        # simulation. This is the "paused but live" state we want.
+        # 1) Force the joint state and the controller targets to the desired
+        #    scan pose. Doing this every frame undoes any drift introduced
+        #    by Isaac Sim's internal physics tick.
+        robot.write_joint_state_to_sim(target_pos, target_vel)
+        robot.set_joint_position_target(target_pos)
+        robot.write_data_to_sim()
+        # 2) Tick the kit app so the render reflects the newly written state.
         simulation_app.update()
 
     env.close()

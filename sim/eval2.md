@@ -193,7 +193,93 @@ Implémentation :
 À élargir progressivement quand on aura validé que la policy gère le
 goal-conditioning sur la position du bowl.
 
-**Status** : implémenté, à entraîner.
+**Status** : ✅ entraîné. **success rate 7.46% à iter 999** sur 4096 envs
+RTX 5070. C'est notre meilleure baseline. Avec plus d'iter (3000+) et/ou
+boost du reward `target_to_bowl_fine`, on devrait dépasser 15-25 %.
+
+### v2 — caméra wrist (RGB) ajoutée à la scène
+
+**Objectif** : permettre la perception visuelle des blocs depuis le poignet
+du SO-101, pour un déploiement réel.
+
+Implémentation :
+- `PickInClutterSceneCfgWithCam(PickInClutterSceneCfg)` ajoute un champ
+  `wrist_cam: CameraCfg`.
+- `Eval2PickInClutterEnvCfg_v2(Eval2PickInClutterEnvCfg_v1)` plug la cam :
+  - prim_path : `{ENV_REGEX_NS}/Robot/gripper_link/wrist_cam`
+    (le `gripper_link` = "wrist_roll_link" du doc TA dans cet URDF)
+  - 240×320 RGB à 10 Hz (`update_period=0.1`)
+  - Intrinsèques Isaac Lab manipulation tutorials :
+    `focal_length=24.0`, `clipping_range=(0.1, 1e5)`
+  - Offset calibré interactivement dans Property panel d'Isaac Sim :
+    - `Translate (-0.02208, 0.05825, 0.03013)` m
+    - `Orient XYZ (-15.544, -9.931, -90.069)` deg → quaternion
+      `(0.70586, -0.03453, -0.15594, -0.69009)`
+    - `convention="opengl"` (pas de transformation Isaac Lab appliquée,
+      les valeurs vont directement dans `xformOp:orient`)
+  - `ee_frame.debug_vis = False` en v2 pour ne pas polluer la vue cam
+
+**Status** : ✅ caméra présente, calibrée pour une scan pose donnée. En
+basculant le viewport sur `wrist_cam` (dropdown caméra en haut à gauche
+d'Isaac Sim), on voit les 2 cubes + bowl + table.
+
+⚠️ **La calibration de la caméra est valide pour UNE pose particulière du
+robot** (la "scan pose" hardcodée dans `view.py` et `capture_dataset.py`).
+Si on change la pose du robot, le `Translate`/`Orient` de la caméra doivent
+être re-tunés en interactif dans le Property panel.
+
+### v2 perception — module CNN (en cours)
+
+**Objectif** : un CNN qui mappe l'image RGB de la caméra wrist aux
+positions 3D `(x, y, z)` des blocs rouge et bleu en repère robot.
+Approche **B (xyz directs)** au lieu de A (pixels + back-project) parce
+qu'elle évite toute calibration de plan table à l'inférence.
+
+Files (`sim/eval2/perception/`) :
+| Fichier | Rôle |
+|---|---|
+| `model.py` | `ColorBlockCNN` — petit CNN ~250k params. 3 conv + AdaptiveAvgPool(4×4) + 2 FC. Sortie 6 floats (xyz_red + xyz_blue) en mètres. |
+| `dataset.py` | `BlockPositionDataset` — wrappe le `.pt` produit par le capture. Brightness jitter, **pas de h-flip** (3D targets ne se flippent pas trivialement). |
+| `capture_dataset.py` | One-off Isaac Sim. Charge env v2, robot en scan pose, à chaque reset capture image + positions xyz GT. Sauve `data.pt`. |
+| `train.py` | Training MSE, Adam, train/val 80/20, early stop. Reporte MAE par coordonnée en cm. |
+| `inference.py` | `PerceptionPipeline` — charge un checkpoint, image → xyz. Pour le deploy. |
+| `README.md` | Walkthrough du workflow. |
+
+**Itérations sur l'architecture CNN** :
+1. Premier essai avec `AdaptiveAvgPool2d(1)` (Global Avg Pool) → val_mae stuck à 2.5 cm = MAD d'une distribution uniforme. **Bug : Global Avg Pool détruit l'info spatiale**, le CNN apprenait juste à prédire la moyenne.
+2. Deuxième essai sans BatchNorm + dataset partagé entre train/val (Subset bug) → val explosé à 900 m.
+3. Version actuelle : `AdaptiveAvgPool2d((4, 4))` qui préserve un grid 4×4 de features → l'info spatiale "où est le rouge" / "où est le bleu" est exploitable par le head FC.
+
+**Status au 2026-05-04 — bloqué sur la qualité du dataset** :
+- Le capture script tourne mais la **scan pose** hardcodée donne un robot
+  où le gripper n'est **pas pile vertical** vers le bas (à cause de la
+  cinématique non-triviale du SO-101). Conséquence : la caméra capte
+  bien les blocs mais d'un angle qui ne correspond pas exactement à ce
+  qu'on veut au déploiement.
+- **À faire pour débloquer** :
+  1. Trouver la bonne pose joints (`shoulder_pan, shoulder_lift, elbow_flex,
+     wrist_flex, wrist_roll, gripper`) où le gripper pointe **strictement
+     vers le bas**, gripper à ~10-15 cm au-dessus du workspace.
+     - Itérer via `view.py` qui prend les valeurs en CLI args :
+       `--shoulder_lift 1.5 --elbow_flex -2.0 --wrist_flex 1.0` etc.
+     - **Astuce** : `view.py` réécrit la pose à chaque frame pour qu'elle
+       reste figée (sinon les contrôleurs ramènent vers home pose).
+  2. Re-tuner la caméra (Translate / Orient en GUI) pour que `wrist_cam`
+     voit clairement les cubes + bowl depuis cette pose.
+  3. Hardcode les nouvelles valeurs dans :
+     - `view.py:SCAN_POSE_JOINTS`
+     - `capture_dataset.py:SCAN_POSE_JOINTS`
+     - `joint_pos_env_cfg.py:Eval2PickInClutterEnvCfg_v2.scene.wrist_cam.offset`
+  4. Re-générer 5000 samples : `uv run python -m sim.eval2.perception.capture_dataset --num_samples 5000 --enable_cameras --save_preview`
+  5. Vérifier les 5 PNG dans `sim/eval2/perception/preview/` — on doit
+     voir les blocs nettement
+  6. Train : `uv run python -m sim.eval2.perception.train --epochs 30`
+  7. Cible : val_mae < 1 cm par coordonnée
+
+**Alternative envisagée** : faire varier légèrement la pose du robot à
+chaque sample pour que le CNN soit robuste à de petits changements de
+viewpoint (utile au déploiement quand la policy bouge le bras). Pas
+encore implémenté.
 
 ---
 
@@ -202,8 +288,10 @@ goal-conditioning sur la position du bowl.
 ```python
 Eval2-PickInBowl-v0          # v0 training (4096 envs)
 Eval2-PickInBowl-Play-v0     # v0 visu (50 envs, sans bruit)
-Eval2-PickInClutter-v1       # v1 training (4096 envs) ← CIBLE PRINCIPALE
+Eval2-PickInClutter-v1       # v1 training (4096 envs) ← BASELINE PROUVÉE (7.46% succ)
 Eval2-PickInClutter-Play-v1  # v1 visu
+Eval2-PickInClutter-v2       # v1 + caméra wrist (training plus lent)
+Eval2-PickInClutter-Play-v2  # v2 visu, à utiliser avec --enable_cameras
 ```
 
 L'enregistrement se fait dans `sim/eval2/__init__.py` à l'import du module
@@ -517,14 +605,27 @@ C'est plus simple que de tout finir Eval 2, et ça vaut autant de points.
 
 ## 15. TL;DR pour quelqu'un qui débarque
 
-1. Repo Eval 2 fonctionnel : structure complète + 4 tâches gym enregistrées
-2. v0, v1, v1.1, v1.2 entraînent en local sur RTX 5070 (~25 min pour 1000 iter à 4096 envs)
-3. **Toute la spec PDF est implémentée** sauf l'observation visuelle (v2 prévu)
-4. **Baseline v1.2** : success rate sim ~ 7.5 % à 1000 iter PPO (cf. section 12 pour la
-   commande exacte de reproduction).
-5. Goulot d'étranglement actuel : `target_to_bowl_fine` (descente précise au-dessus du
-   bowl). Pistes : training plus long, boost reward fine, curriculum, BC warmstart.
-6. Reste à faire pour points : v2 caméra + perception modulaire + deploy au robot réel.
+État au **2026-05-04** :
+
+1. **v0, v1, v1.1, v1.2 RL state-based** : tous fonctionnels.
+   `Eval2-PickInClutter-v1` à 1000 iter sur 4096 envs RTX 5070 → **success rate 7.46 %**.
+2. **v2 (caméra wrist)** : caméra présente dans la scène, calibrée pour une scan pose
+   spécifique. Tâches `Eval2-PickInClutter-v2` et `Eval2-PickInClutter-Play-v2`
+   enregistrées. **Lance toujours avec `--enable_cameras`** sinon Isaac Lab désactive
+   silencieusement le rendu cam.
+3. **Module perception CNN** : architecture `ColorBlockCNN` écrite, pipeline
+   capture/train/inference écrit, **bloqué sur la qualité du dataset capturé**.
+   Le robot n'est pas exactement dans la pose "gripper vertical" qu'on voudrait.
+   Voir section 5 (sub-section "v2 perception") pour les étapes pour débloquer.
+4. **Toute la spec PDF est implémentée** sauf : (a) observation visuelle pleinement
+   intégrée à la policy (v2 perception en cours), (b) domain randomization (v3 prévu).
+5. Goulot RL actuel : `target_to_bowl_fine` (descente précise au-dessus du bowl).
+   Pistes : training plus long (3000 iter+), boost reward fine, BC warmstart.
+6. **Reste à faire pour points Eval 2** :
+   - Débloquer dataset perception (1-2 h)
+   - Entraîner CNN (5 min sur 5070)
+   - Écrire `deploy/eval2_inference.py` (mirror du sanity check inference)
+   - Test sur le vrai SO-101 sur 5 rollouts
 
 ## 16. Procédure deploy au robot réel (Eval 2 day)
 
