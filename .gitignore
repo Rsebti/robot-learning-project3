@@ -228,3 +228,4 @@ document_pdf.pdf
 sim/eval2/perception/data.pt
 sim/eval2/perception/checkpoint.pt
 sim/eval2/perception/preview/
+sim/eval2/perception/deploy_preview/
