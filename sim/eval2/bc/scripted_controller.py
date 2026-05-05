@@ -52,12 +52,15 @@ Approximations / caveats
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
 
-from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
-from isaaclab.utils.math import matrix_from_quat, quat_inv, subtract_frame_transforms
+from isaaclab.utils.math import subtract_frame_transforms
+
+from sim.eval2.bc.analytical_ik import analytical_ik_so101
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -92,14 +95,12 @@ class ScriptedPickController:
     # All meters. Heights are RELATIVE to the surface they reference (block top
     # or bowl floor). Block_pos_w[:, 2] returns the block's center, which sits
     # at half-height = 0.01 m for our 2 cm cubes.
-    APPROACH_HEIGHT = 0.08
-    # v3: -5 mm BELOW block center. Visual diagnostic on v2 showed the tip
-    # landing at z=0.024 (1.4 cm above block center), which put one finger
-    # on the cube TOP and the other to the side — gripper closed on empty
-    # space. We need the tip at block CENTER (z=0.010) for the jaws to
-    # straddle the cube faces at mid-height. With POS_TOL=5mm now, aiming
-    # at block_z - 0.005 means the actual tip lands in [0, 0.010] — fingers
-    # squarely around the cube.
+    # v4: tip 2 cm ABOVE the cube's top face. Top face = block_center +
+    # block_half_size = 0.010 + 0.010 = 0.020. So tip target z = 0.040,
+    # which is APPROACH_HEIGHT = 0.030 above block center.
+    APPROACH_HEIGHT = 0.03
+    # Tip 5 mm BELOW block center -> tip at z=0.005 (5 mm above table top).
+    # Jaws straddle the cube's lower half before closing.
     DESCEND_HEIGHT = -0.005
     LIFT_HEIGHT = 0.12            # clears the 2.5 cm bowl walls comfortably
     ABOVE_BOWL_HEIGHT = 0.08      # transport hover, well above the rim
@@ -155,6 +156,30 @@ class ScriptedPickController:
         +1.0,  # DONE                open
     )
 
+    # ---------------------------------------------------------- gripper phi
+    # Per-phase gripper orientation in the arm plane (radians, absolute
+    # angle of the last link from horizontal). Calibrated so that the
+    # IK solution for typical workspace targets keeps wrist_flex_urdf
+    # within +/-1.55 (URDF soft limit is +/-1.658, leaving 0.1 rad of
+    # safety margin). We tilt the gripper "back" (more negative phi)
+    # for low-z phases and keep it closer to vertical for high-z phases.
+    #
+    # phi calibration done analytically by hand for the central target
+    # (cube at r=0.18 m). For perturbations within the eval workspace
+    # (cubes/bowls in +/-10 cm box), wrist_flex shifts by < 0.15 rad,
+    # still well within the +/-1.658 hard limit.
+    PHI_PER_PHASE = (
+        -1.85,  # APPROACH            tip 2 cm above cube top (z~0.04)
+        -1.90,  # DESCEND             tip 5 mm above table (z~0.005)
+        -1.90,  # CLOSE               hold at grasp height
+        -1.55,  # LIFT                tip 12 cm above grasp z (z~0.13)
+        -1.70,  # ABOVE_BOWL          tip 8 cm above bowl floor (z~0.08)
+        -1.85,  # DESCEND_TO_RELEASE  tip 4 cm above bowl floor (z~0.04)
+        -1.85,  # OPEN                hold at release height
+        -1.55,  # RETREAT             tip 15 cm above bowl (z~0.15)
+        -1.55,  # DONE                idle, same as RETREAT
+    )
+
     # ------------------------------------------------------------------ init
     def __init__(self, env: "ManagerBasedRLEnv"):
         self.env = env
@@ -169,54 +194,60 @@ class ScriptedPickController:
         )
         self.gripper_joint_id = self.robot.find_joints(["gripper"])[0][0]
 
-        # v3-revised: IK operates on 3 ACTIVE joints (pan, lift, elbow) only.
-        # The 2 wrist joints (flex, roll) are hard-locked to their defaults
-        # so the IK must NOT plan motion for them — otherwise it computes
-        # delta_q assuming wrist motion that we then prevent in the action,
-        # making the actual EE motion not match the IK's prediction.
-        # Joint order in arm_joint_ids: [pan, lift, elbow, wrist_flex, wrist_roll].
-        self.active_arm_joint_ids = self.arm_joint_ids[:3]
-        self.active_arm_joint_names = self.arm_joint_names[:3]
-
-        # End-effector body (gripper_link) + jacobian index.
+        # End-effector frame — used to read the actual tip position for
+        # phase-transition checks. The "ee_frame" SceneEntity is the
+        # FrameTransformer that puts the tip at gripper_link + offset.
+        self.ee_frame = env.scene["ee_frame"]
+        # gripper_link body index — kept for debug logs (run_scripted
+        # prints body_pose_w[ee_body_idx] to inspect the gripper world
+        # position). Not used in the IK pipeline.
         body_ids, _ = self.robot.find_bodies("gripper_link")
         self.ee_body_idx = body_ids[0]
-        # Fixed-base articulation: jacobian index = body index - 1.
-        self.ee_jacobi_idx = self.ee_body_idx - 1
 
-        # Default joint pos for the arm — used to invert the JointPositionAction map.
-        self.default_arm_pos = self.robot.data.default_joint_pos[:, self.arm_joint_ids].clone()
-        # Default for the 3 active joints (subset of default_arm_pos).
-        self.default_active_pos = self.robot.data.default_joint_pos[:, self.active_arm_joint_ids].clone()
-
-        # v3-revised: switch BACK to position-only IK + hard-lock both wrist
-        # joints in the action.
-        #
-        # The pose-mode IK kept wrist_roll under control (with the previous
-        # hard-lock) but let wrist_flex drift from 1.57 (down) to 1.07 (61°
-        # from vertical) — visible in v3 logs. The gripper tilted forward,
-        # so the lower finger hit the cube TOP instead of going down its
-        # front face. Hard-locking BOTH wrist joints in the action handles
-        # this directly; we no longer need the IK to track orientation.
-        #
-        # With wrist_flex and wrist_roll forced to defaults, the IK has
-        # effectively 3 DOF (shoulder_pan, shoulder_lift, elbow_flex) to
-        # reach a 3-D goal — well-determined, no slack variables to drift.
-        ik_cfg = DifferentialIKControllerCfg(
-            command_type="position",
-            use_relative_mode=False,
-            ik_method="dls",
-            ik_params={"lambda_val": 0.05},
-        )
-        self.ik = DifferentialIKController(
-            ik_cfg, num_envs=self.num_envs, device=self.device
+        # Default joint pos (URDF convention) — to invert the
+        # JointPositionAction affine map (action = 2*(joint - default)).
+        self.default_arm_pos = (
+            self.robot.data.default_joint_pos[:, self.arm_joint_ids].clone()
         )
 
-        # Capture the home pose's gripper_link orientation in WORLD frame.
-        # This is the "gripper points down" quat. We re-use it as the target
-        # orientation for every phase. Cached lazily on the first compute_action()
-        # call (the env must be stepped once before robot.data is populated).
-        self._target_quat_w: torch.Tensor | None = None
+        # Load SO-101 kinematic constants measured by
+        # ``measure_link_lengths.py``. These are repo-local (gitignored
+        # via the json suffix in the repo's .gitignore? — if not, just
+        # ship them in).
+        link_cfg_path = Path(__file__).parent / "so101_link_lengths.json"
+        if not link_cfg_path.exists():
+            raise FileNotFoundError(
+                f"{link_cfg_path} not found. Run "
+                f"`uv run python -m sim.eval2.bc.measure_link_lengths` first."
+            )
+        with open(link_cfg_path) as f:
+            link_cfg = json.load(f)
+        self.L1 = float(link_cfg["L1"])
+        self.L2 = float(link_cfg["L2"])
+        self.L3 = float(link_cfg["L3"])
+        self.base_offset_z = float(link_cfg["base_offset_z"])
+        self.base_offset_r = float(link_cfg.get("base_offset_r", 0.0))
+        self.offset_theta2 = float(link_cfg["offset_theta2"])
+        self.offset_theta3 = float(link_cfg["offset_theta3"])
+        self.offset_theta4 = float(link_cfg["offset_theta4"])
+        # Per-phase gripper phi tensor (see PHI_PER_PHASE constant).
+        # SO-101 is 5-DoF, so the gripper orientation is a used-up DoF
+        # — fixing phi = -pi/2 strict for all phases makes the IK
+        # demand wrist_flex_urdf beyond +/-1.658 for low-z targets.
+        # We instead pick a phase-specific phi calibrated to keep all
+        # joint limits comfortably satisfied, with no runtime search.
+        self._phi_per_phase_t = torch.tensor(
+            self.PHI_PER_PHASE, device=self.device, dtype=torch.float32
+        )
+
+        # Snapshot of the LIFT-phase target. Captured at the CLOSE -> LIFT
+        # transition (= the block position at the moment of grasp + 12 cm).
+        # Without this snapshot, target_xyz would chase the block as it
+        # rises with the gripper, making the distance criterion unreachable
+        # (the target moves at the same rate as the tip).
+        # Bowl-relative phases don't need this because the bowl is
+        # kinematic — it never moves.
+        self.lift_target_xyz = torch.zeros(self.num_envs, 3, device=self.device)
 
         # Per-env state buffers.
         self.phase = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
@@ -268,76 +299,67 @@ class ScriptedPickController:
             env_ids = torch.arange(self.num_envs, device=self.device)
         self.phase[env_ids] = 0
         self.phase_step[env_ids] = 0
-        self.ik.reset(env_ids)
 
     @torch.no_grad()
     def compute_action(self) -> torch.Tensor:
-        """One env-step worth of action for all envs. Returns (num_envs, 6)."""
-        # 1. Per-phase target xyz of gripper_link in world frame.
+        """One env-step worth of action for all envs. Returns (num_envs, 6).
+
+        Pipeline (analytical IK, no Jacobian, no iteration):
+          1. State machine -> target tip xyz in world frame.
+          2. World -> base frame transform.
+          3. analytical_ik_so101 -> URDF joint angles (5,).
+          4. Invert JointPositionAction map -> raw action (5,).
+          5. Append gripper command from state machine -> action (6,).
+          6. Advance the state machine.
+        """
+        # 1. Per-phase target xyz of the TIP in world frame.
         target_pos_w = self._compute_target_xyz_world()                      # (N, 3)
 
-        # 2. Read current robot state.
-        ee_pose_w = self.robot.data.body_pose_w[:, self.ee_body_idx]          # (N, 7)
-        root_pose_w = self.robot.data.root_pose_w                              # (N, 7)
-        # IK runs on the 3 ACTIVE joints (wrist joints are hard-locked, so we
-        # must NOT include them in the IK plan — otherwise IK assumes wrist
-        # motion that the action override prevents).
-        joint_pos_active = self.robot.data.joint_pos[:, self.active_arm_joint_ids]  # (N, 3)
-
-        # 3. Express target & current EE in robot base frame for IK.
+        # 2. Express the target in the robot base frame.
+        root_pose_w = self.robot.data.root_pose_w                            # (N, 7)
         target_pos_b, _ = subtract_frame_transforms(
             root_pose_w[:, :3], root_pose_w[:, 3:7], target_pos_w
+        )                                                                    # (N, 3)
+
+        # 3. Closed-form IK -> URDF joint angles for the 5 arm joints.
+        # phi is picked per-phase from PHI_PER_PHASE (see comment
+        # there). elbow_up=False because the URDF home pose is in the
+        # elbow-down branch (theta_3_ik = -1.29 at home).
+        phi = self._phi_per_phase_t[self.phase]                              # (N,)
+        ik_result = analytical_ik_so101(
+            target_pos_b,
+            L1=self.L1, L2=self.L2, L3=self.L3,
+            phi=phi,
+            elbow_up=False,
+            base_offset_z=self.base_offset_z,
+            base_offset_r=self.base_offset_r,
+            offset_theta2=self.offset_theta2,
+            offset_theta3=self.offset_theta3,
+            offset_theta4=self.offset_theta4,
         )
-        ee_pos_b, ee_quat_b = subtract_frame_transforms(
-            root_pose_w[:, :3], root_pose_w[:, 3:7],
-            ee_pose_w[:, :3], ee_pose_w[:, 3:7],
-        )
+        joint_pos_des = ik_result.joint_pos                                  # (N, 5)
 
-        # 4. Cap the per-step Cartesian target to MAX_STEP_XYZ.
-        delta = target_pos_b - ee_pos_b                                        # (N, 3)
-        delta_norm = torch.norm(delta, dim=-1, keepdim=True).clamp(min=1e-9)
-        scale = torch.clamp(self.MAX_STEP_XYZ / delta_norm, max=1.0)
-        clipped_target_b = ee_pos_b + delta * scale                            # (N, 3)
+        # 4. Invert the JointPositionAction affine map. The env applies
+        #    processed = action * 0.5 + default, so:
+        #        action = (target - default) / 0.5 = 2 * (target - default)
+        # NOTE: we deliberately DO NOT clip arm_action to [-1, 1] here.
+        # With env scale=0.5, clipping would limit each joint to default
+        # +/- 0.5 rad, which is not enough to reach a cube ~25 cm away
+        # from the base (typical IK targets need elbow_flex >= 2 rad,
+        # i.e. arm_action[2] >= 4). The env's PD controller follows the
+        # raw target without clipping. When we do BC/DAPG later, we
+        # either normalize the action range or increase the env's
+        # action scale so the policy can replicate these magnitudes.
+        arm_action = 2.0 * (joint_pos_des - self.default_arm_pos)            # (N, 5)
 
-        # 5. Jacobian for the 3 ACTIVE joints only, rotated into base frame.
-        jacobian = self.robot.root_physx_view.get_jacobians()[
-            :, self.ee_jacobi_idx, :, self.active_arm_joint_ids
-        ].clone()                                                              # (N, 6, 3)
-        base_rot_matrix = matrix_from_quat(quat_inv(root_pose_w[:, 3:7]))     # (N, 3, 3)
-        jacobian[:, :3, :] = torch.bmm(base_rot_matrix, jacobian[:, :3, :])
-        jacobian[:, 3:, :] = torch.bmm(base_rot_matrix, jacobian[:, 3:, :])
+        # 5. Gripper open/close from the phase machine.
+        gripper_action = self._gripper_per_phase_t[self.phase].unsqueeze(-1) # (N, 1)
 
-        # 6. IK -> active-joint targets (3-DOF position-only).
-        self.ik.set_command(clipped_target_b, ee_quat=ee_quat_b)
-        joint_pos_des_active = self.ik.compute(
-            ee_pos_b, ee_quat_b, jacobian, joint_pos_active
-        )                                                                      # (N, 3)
+        action = torch.cat([arm_action, gripper_action], dim=-1)             # (N, 6)
 
-        # 7. Build the 5-D arm action: active joints from IK, wrist joints
-        #    locked.
-        arm_action = torch.zeros(self.num_envs, 5, device=self.device)
-        arm_action[:, 0:3] = 2.0 * (joint_pos_des_active - self.default_active_pos)
-        # arm_action[:, 3] (wrist_flex) stays at 0 (raw=0 + default 1.57
-        #   -> processed = 1.57 = gripper points down strict).
-        # arm_action[:, 4] (wrist_roll): DYNAMIC compensation of
-        #   shoulder_pan. When shoulder_pan rotates by theta to face the
-        #   cube, the whole arm (including the gripper) rotates by theta
-        #   in world frame — so the jaws rotate too. To keep the jaws
-        #   oriented in a FIXED world direction (perpendicular to the
-        #   arm's home pointing axis), we set wrist_roll = -shoulder_pan.
-        #   In action space: arm_action[:, 0] = 2*shoulder_pan_des, so
-        #   wrist_roll_des = -shoulder_pan_des  =>
-        #   arm_action[:, 4] = 2*(-shoulder_pan_des) = -arm_action[:, 0].
-        arm_action[:, 4] = -arm_action[:, 0]
-
-        # 10. Gripper sign for the current phase.
-        gripper_action = self._gripper_per_phase_t[self.phase].unsqueeze(-1)  # (N, 1)
-
-        # 11. Final action.
-        action = torch.cat([arm_action, gripper_action], dim=-1)              # (N, 6)
-
-        # 12. Advance state machine for the next call.
-        self._advance_phases(target_pos_w, ee_pose_w[:, :3])
+        # 6. Advance state machine using the ACTUAL tip position.
+        actual_tip_w = self.ee_frame.data.target_pos_w[:, 0, :]              # (N, 3)
+        self._advance_phases(target_pos_w, actual_tip_w)
 
         return action
 
@@ -350,17 +372,14 @@ class ScriptedPickController:
         return torch.where(is_red, red, blue)
 
     def _compute_target_xyz_world(self) -> torch.Tensor:
-        """Compute per-env target gripper_link xyz in world frame for current phase.
-
-        The output is the position the gripper_link body should occupy. To put
-        the FrameTransformer "tip" at a point (x, y, z), we put gripper_link at
-        (x, y, z + TIP_Z_OFFSET) — assumes the gripper points roughly down.
-        """
+        """Per-env target TIP xyz in world frame for the current phase."""
         block_pos_w = self._target_block_pos_w()                               # (N, 3)
         bowl_pos_w = self.env.scene["bowl_floor"].data.root_pos_w              # (N, 3)
 
-        # Phases 0..3 (APPROACH..LIFT) reference the block; 4..8 reference the bowl.
+        # Phases 0..3 reference the block; 4..8 reference the bowl.
         is_block_phase = self.phase < self.ABOVE_BOWL                          # (N,)
+        # Phase 3 (LIFT) uses a SNAPSHOT instead of the live block position.
+        is_lift_phase = (self.phase == self.LIFT)                              # (N,)
 
         # xy choice
         xy = torch.where(
@@ -368,17 +387,36 @@ class ScriptedPickController:
             block_pos_w[:, :2],
             bowl_pos_w[:, :2],
         )                                                                       # (N, 2)
+        # Override xy for LIFT envs with the snapshot xy.
+        xy = torch.where(
+            is_lift_phase.unsqueeze(-1),
+            self.lift_target_xyz[:, :2],
+            xy,
+        )
 
-        # z choice: surface_z + per-phase offset (+ tip compensation)
+        # z choice: surface_z + per-phase height offset.
         z_block = block_pos_w[:, 2] + self._z_block_phase[self.phase]          # (N,)
         z_bowl = bowl_pos_w[:, 2] + self._z_bowl_phase[self.phase]             # (N,)
-        z = torch.where(is_block_phase, z_block, z_bowl) + self.TIP_Z_OFFSET   # (N,)
+        z = torch.where(is_block_phase, z_block, z_bowl)                       # (N,)
+        # Override z for LIFT envs with the snapshot z.
+        z = torch.where(is_lift_phase, self.lift_target_xyz[:, 2], z)
 
         return torch.cat([xy, z.unsqueeze(-1)], dim=-1)                        # (N, 3)
 
     def _advance_phases(self, target_pos_w: torch.Tensor, ee_pos_w: torch.Tensor):
-        """Update self.phase and self.phase_step in place."""
-        # Distance from the actual gripper_link world pos to the commanded one.
+        """Update self.phase and self.phase_step in place.
+
+        Transition rules:
+          - Cartesian-target phases (APPROACH, DESCEND, LIFT, ABOVE_BOWL,
+            DESCEND_TO_RELEASE, RETREAT): advance ONLY when the actual tip
+            reaches within POS_TOL of the target. No timeout — the env's
+            episode truncation handles the worst case.
+          - Fixed-duration phases (CLOSE, OPEN): advance ONLY on step
+            count, not distance. The gripper joint needs ~17 steps to
+            traverse 0.5 rad mechanically; the tip position is irrelevant
+            during the gripper actuation.
+        """
+        # Distance from the actual tip world pos to the commanded target.
         dist = torch.norm(ee_pos_w - target_pos_w, dim=-1)                     # (N,)
 
         max_steps_now = self._max_steps_t[self.phase]                          # (N,)
@@ -386,9 +424,24 @@ class ScriptedPickController:
         reached = dist < self.POS_TOL                                          # (N,)
         is_fixed = self._fixed_duration_mask_t[self.phase]                     # (N,)
 
-        # Advance: timeout always advances; reached advances only on non-fixed phases.
-        # Don't advance past DONE.
-        advance_now = (timed_out | (reached & ~is_fixed)) & (self.phase < self.DONE)
+        # Distance-based advance for Cartesian phases; step-count for fixed.
+        advance_non_fixed = reached & ~is_fixed
+        advance_fixed = timed_out & is_fixed
+        advance_now = (advance_non_fixed | advance_fixed) & (self.phase < self.DONE)
+
+        # Snapshot the LIFT target xyz at the CLOSE -> LIFT transition.
+        # We need this BEFORE updating self.phase so we can detect the
+        # transition. envs that just satisfy advance_now AND were in CLOSE
+        # are about to enter LIFT.
+        becomes_lift = advance_now & (self.phase == self.CLOSE)
+        if becomes_lift.any():
+            block_pos_w = self._target_block_pos_w()                           # (N, 3)
+            new_xy = block_pos_w[:, :2]                                        # (N, 2)
+            new_z = block_pos_w[:, 2] + self.LIFT_HEIGHT                       # (N,)
+            new_target = torch.cat([new_xy, new_z.unsqueeze(-1)], dim=-1)      # (N, 3)
+            self.lift_target_xyz = torch.where(
+                becomes_lift.unsqueeze(-1), new_target, self.lift_target_xyz
+            )
 
         self.phase = torch.where(advance_now, self.phase + 1, self.phase)
         self.phase_step = torch.where(

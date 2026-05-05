@@ -97,8 +97,9 @@ def main():
         flush=True,
     )
     print(
-        f"[scripted] ee body idx={controller.ee_body_idx} "
-        f"jacobi idx={controller.ee_jacobi_idx}",
+        f"[scripted] ee body idx={controller.ee_body_idx}  "
+        f"L1={controller.L1:.3f} L2={controller.L2:.3f} L3={controller.L3:.3f} "
+        f"base_z={controller.base_offset_z:.3f}",
         flush=True,
     )
 
@@ -121,8 +122,73 @@ def main():
         flush=True,
     )
 
+    # Track phase changes for env0 to print a clean transition summary.
+    prev_phase_env0 = -1
+
+    def _log_transition(step_idx, prev_phase, new_phase):
+        scn = env.unwrapped.scene
+        block_red = scn["block_red"].data.root_pos_w[0].cpu().tolist()
+        block_blue = scn["block_blue"].data.root_pos_w[0].cpu().tolist()
+        bowl = scn["bowl_floor"].data.root_pos_w[0].cpu().tolist()
+        actual_tip = scn["ee_frame"].data.target_pos_w[0, 0, :].cpu().tolist()
+        target_xyz = controller._compute_target_xyz_world()[0].cpu().tolist()
+        tgt_color = int(env.unwrapped.target_color[0].item())
+        tgt_block = block_blue if tgt_color == 1 else block_red
+        dist_to_target = (
+            (actual_tip[0] - target_xyz[0]) ** 2
+            + (actual_tip[1] - target_xyz[1]) ** 2
+            + (actual_tip[2] - target_xyz[2]) ** 2
+        ) ** 0.5
+        prev_name = controller.PHASE_NAMES[prev_phase] if prev_phase >= 0 else "INIT"
+        new_name = controller.PHASE_NAMES[new_phase]
+        print("=" * 72, flush=True)
+        print(
+            f"[transition] step {step_idx:4d} env0  {prev_name}({prev_phase}) -> {new_name}({new_phase})",
+            flush=True,
+        )
+        print(
+            f"  target_color    = {'red' if tgt_color == 0 else 'blue'}",
+            flush=True,
+        )
+        print(
+            f"  target_xyz_world= ({target_xyz[0]:+.4f}, {target_xyz[1]:+.4f}, {target_xyz[2]:+.4f})",
+            flush=True,
+        )
+        print(
+            f"  actual tip      = ({actual_tip[0]:+.4f}, {actual_tip[1]:+.4f}, {actual_tip[2]:+.4f})",
+            flush=True,
+        )
+        print(
+            f"  dist to target  = {dist_to_target * 1000:.2f} mm",
+            flush=True,
+        )
+        print(
+            f"  target_block    = ({tgt_block[0]:+.4f}, {tgt_block[1]:+.4f}, {tgt_block[2]:+.4f})  ({'red' if tgt_color == 0 else 'blue'})",
+            flush=True,
+        )
+        print(
+            f"  bowl_floor      = ({bowl[0]:+.4f}, {bowl[1]:+.4f}, {bowl[2]:+.4f})",
+            flush=True,
+        )
+        print(
+            f"  joint pos URDF  = "
+            + ", ".join(
+                f"{n}={v:+.3f}"
+                for n, v in zip(
+                    env.unwrapped.scene["robot"].data.joint_names,
+                    env.unwrapped.scene["robot"].data.joint_pos[0].cpu().tolist(),
+                )
+            ),
+            flush=True,
+        )
+
     step_idx = 0
     while n_episodes_done < args.num_episodes:
+        # Print a clean banner at each phase transition for env 0.
+        current_phase_env0 = int(controller.phase[0].item())
+        if current_phase_env0 != prev_phase_env0:
+            _log_transition(step_idx, prev_phase_env0, current_phase_env0)
+            prev_phase_env0 = current_phase_env0
         # ---- Debug snapshot for env 0 ----
         if args.debug_env0 and step_idx % 5 == 0:
             scn = env.unwrapped.scene

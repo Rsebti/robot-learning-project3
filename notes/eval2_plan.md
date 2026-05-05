@@ -1,5 +1,13 @@
 # Eval 2 — Plan de travail
 
+> **⚠️ HISTORIQUE (2026-04-30)** — Ce plan d'origine décrit comment on a démarré
+> Eval 2 (install Isaac Lab, structure du package, env v0/v1, premières
+> tentatives RL). Il a été suivi jusqu'à v1.4. Pour la stratégie courante
+> (post-pivot end-to-end vision + BC ACT + DAPG), voir
+> [`sim/eval2.md`](../sim/eval2.md) section 0.
+>
+> Conservé comme référence pour comprendre comment on est arrivé là.
+
 ## Tâche (rappel TA spec)
 - Deux blocs **adjacents** de couleurs différentes sur la table
 - **Couleur cible** donnée en input → policy doit ramasser **ce** bloc

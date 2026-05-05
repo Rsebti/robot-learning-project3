@@ -6,6 +6,85 @@
 > **Statut au 2026-04-30** : structure complète, tâches `v0` et `v1` qui
 > entraînent (PPO converge) sur RTX 5070 local, success rate encore faible,
 > training v1.1 en cours après une passe de compliance avec le PDF des TAs.
+>
+> **Statut au 2026-05-05 (mise à jour décisive)** : après plusieurs jours de
+> debug du scripted IK controller (jamais arrivé à grasp fiable à cause des
+> contraintes 5-DoF du SO-101), bascule de stratégie. Voir
+> [section 0 — Décision archi](#0-décision-archi-2026-05-05--end-to-end-vision--option-a-dapg).
+
+---
+
+## 0. Décision archi (2026-05-05) — end-to-end vision + Option A DAPG
+
+### Ce qu'on abandonne
+
+- **Approche modulaire** (image → CNN perception → block_xyz → policy
+  state-based MLP) : le CNN entraîné (val_mae 0.87 cm) reste fonctionnel
+  mais **n'est plus dans le chemin principal**. Il peut servir de
+  pretrained warmstart pour le visual encoder de la policy end-to-end,
+  rien de plus.
+- **Scripted IK controller pour générer des démos en sim** : math correcte
+  (FK→IK→FK 0.0001 mm) mais le SO-101 5-DoF + limites articulaires serrées
+  font que le runtime sature ou se contorsionne. Voir
+  [`notes/eval2_ik_retrospective.md`](../notes/eval2_ik_retrospective.md)
+  pour l'audit complet. **Code conservé** dans `sim/eval2/bc/` mais pas
+  utilisé pour la suite.
+- **PPO from-scratch state-based** : v1.0–1.4 ont plafonné à 2–7 % succès,
+  classique du local optimum sans démos. On arrête de patcher.
+
+### Ce qu'on fait à la place — Option A : BC + DAPG end-to-end vision
+
+```
+[Étape 1 — au labo, fait par Federico]
+   50–100 démos teleop Eval 2 (2 cubes colorés, bowl, target_color, bowl_xyz
+   variés). Méthode grasping standardisée : top-down vertical, approche au-
+   dessus du cube, descente, fermeture, lift, transport, drop, retreat.
+
+[Étape 2 — au PC]
+   BC pretrain ACT end-to-end (image wrist cam + joint_pos + target_color +
+   bowl_xyz → action). Réutilise l'archi qui a fait 5/5 sur le sanity check.
+
+[Étape 3 — sur Brev H100 (~$50-100 budget)]
+   PPO finetune en sim avec image observation + auxiliary BC loss (DAPG).
+   Domain randomization activée (couleurs, lumière, textures, frottements).
+   Sim env : Eval2-PickInClutter-v2 (avec wrist cam).
+
+[Étape 4 — au labo]
+   Deploy au SO-101 réel via deploy/eval2_inference.py adapté pour image-
+   in-policy (au lieu de perception module).
+```
+
+### Pourquoi Option A et pas autre chose
+
+| Option considérée | Verdict |
+|---|---|
+| BC seul (ACT) sans RL | Spec TA dit "RL mandatory" — on perd des points |
+| Pure PPO from-scratch image | PPO state-based plafonne déjà, image c'est pire |
+| Diffusion policy + RL | Trop ambitieux pour la deadline (~mid-mai) |
+| Pretrained encoder freeze + RL léger | Encoder peut être trop rigide |
+| **BC + DAPG end-to-end image** ⭐ | **Standard littérature manipulation, conforme spec, faisable budget** |
+
+### Ce qui change concrètement dans le repo
+
+- `sim/eval2/perception/` : **mostly dead code**. Garder les fichiers en
+  référence + warmstart potentiel mais ne pas continuer à itérer dessus.
+- `sim/eval2/bc/` (scripted IK + analytical_ik) : **dead code** suite à
+  l'abandon du scripted controller. À ne pas supprimer (utile comme outil
+  de validation FK pour vérifier les calibrations futures).
+- `deploy/eval2_inference.py` : **à refactor** pour passer l'image directement
+  à la policy au lieu de la passer au CNN puis injecter les xyz.
+- Training PPO : doit utiliser `Eval2-PickInClutter-v2` avec
+  `--enable_cameras`, et **le rendering caméra ralentit le step de 5–10×**
+  → quasiment obligatoire de passer sur Brev H100.
+
+### Statut courant (2026-05-05 soir)
+
+- ⏳ **En attente des démos teleop de Federico** (annoncé pour fin de
+  semaine).
+- En parallèle, possible de lancer le **Plan A du PPO state-based**
+  (milestones conditionnels + boost success_bonus) en background sur le
+  RTX 5070 — si ça pète 30%+ succès on a un fallback. Voir [section 13
+  Piste A](#piste-a--améliorer-le-reward-shaping-1-h-de-code--4-h-training).
 
 ---
 
@@ -657,13 +736,34 @@ tensorboard --logdir <isaac_so_arm101>/logs/rsl_rl/eval2_pick_in_bowl
 
 ## 13. Que faire ensuite (par où continuer)
 
-**Mise à jour 2026-05-05** : le bottleneck principal n'est plus
-l'install/structure mais **obtenir une policy à >50% success rate**.
-Les pistes B (caméra/perception) ont été faites avec succès. Le pipeline
-deploy existe. Il reste juste le RL qui ne converge pas vers une vraie
-solution.
+**Mise à jour 2026-05-05 (post-pivot)** : voir [section 0](#0-décision-archi-2026-05-05--end-to-end-vision--option-a-dapg)
+pour la stratégie active. Le chemin canonique est **Option A : BC ACT
+end-to-end + DAPG finetune en sim avec image**. Les pistes A/B/C/D
+ci-dessous sont des **alternatives ou compléments**, pas le plan
+principal.
 
-### Piste A — Améliorer le reward shaping (~1 h de code + 4 h training)
+### Piste 0 (active) — Attendre les démos teleop, puis BC+DAPG end-to-end
+
+Étapes détaillées dans la section 0. Statut : ⏳ en attente des démos
+de Federico (annoncées fin de semaine).
+
+Une fois les démos disponibles :
+1. Push HF (`Rsebti/projet3-demos-eval2`).
+2. BC pretrain ACT (image + joint_pos + target_color + bowl_xyz → action),
+   ~2h sur RTX 5070.
+3. PPO finetune en sim avec image obs + aux BC loss (DAPG), 5–10h sur
+   Brev H100.
+4. Domain randomization (couleurs, lumière, textures) avant ou pendant
+   PPO.
+5. Recapture rien — l'image ENTRE dans la policy, plus de module
+   perception séparé.
+6. Deploy `deploy/eval2_inference.py` refactor pour image-in.
+
+### Piste A (FALLBACK) — Améliorer le reward shaping (~1 h de code + 4 h training)
+
+⚠️ **Reléguée en fallback** depuis le pivot Option A end-to-end (section 0).
+À lancer en background pendant qu'on attend les démos teleop : si ça pète
+30%+ succès state-based, on aura un plan B robuste.
 
 v1.4 a montré que la policy game les milestones sparse indépendants.
 Deux corrections qui se cumulent :
@@ -690,32 +790,21 @@ rate >30 % → on continue à raffiner. Si toujours <10 % → bascule sur D.
 - ⚠️ Le CNN actuel est entraîné sur les viewpoints de v1.2 chaotique →
   à recapturer + retrain quand on aura une bonne policy.
 
-### Piste B — BC warmstart (~quelques heures, le plus prometteur si A ne suffit pas)
+### Piste B — ~~BC warmstart via scripted controller en sim~~ ❌ ABANDONNÉE
 
-Approche éprouvée en RL manipulation, **explicitement recommandée par la TA spec** :
-> "Expert teleop data is encouraged for training efficiency."
+Tentative faite (cf. `sim/eval2/bc/`) :
+- IK closed-form analytique implémentée + calibrée. Math validée
+  (FK→IK→FK 0.0001 mm).
+- Scripted state machine 9 phases.
+- **Échec runtime** : SO-101 5-DoF + limites articulaires
+  serrées (wrist_flex ±1.658) → demande IK ou sature ou contortionne.
+  Adaptive phi search, phi-per-phase : aucune variante n'a passé un
+  smoke test 50 envs ≥ 80 % succès.
+- Audit complet : [`notes/eval2_ik_retrospective.md`](../notes/eval2_ik_retrospective.md).
 
-Étapes :
-
-1. **Scripted controller** (~3-4h de code) : algorithme déterministe avec IK
-   inverse qui fait pick-and-place :
-   - Lire `target_color`, identifier le bon bloc
-   - IK pour positionner gripper au-dessus du bloc cible
-   - Descendre, fermer gripper
-   - Lever, IK vers position au-dessus du bowl
-   - Descendre, ouvrir gripper
-
-2. **Generate démos** (~30 min) : rouler le scripted controller dans 4096 envs
-   en parallèle pendant 1000 episodes, sauvegarder (obs, action) à chaque step.
-   → Dataset de ~10 000 démos.
-
-3. **BC pretrain** (~1h) : entraîner la même architecture actor-critic
-   (256-128-64 MLP) en imitation learning sur ce dataset.
-
-4. **PPO finetune** (~3-5h) : reprendre le checkpoint BC, finetune avec
-   PPO. Dramatiquement plus rapide à converger qu'un PPO from-scratch.
-
-→ Avec un peu de chance, success rate **60-80%** dans la journée.
+**Remplacée par** : l'Option A (section 0) — démos teleop **réelles**
+au lieu de démos sim scriptées. Plus solide pour le sim-to-real et
+recommandé par la TA spec.
 
 ### Piste C — Domain randomization (v3, sim-to-real)
 
@@ -771,62 +860,64 @@ Une fois la policy >50% en sim ET le CNN recapturé :
 
 ## 15. TL;DR pour quelqu'un qui débarque
 
-État au **2026-05-05 matin** :
+État au **2026-05-05 soir (post-pivot)** :
 
-1. **v0, v1, v1.1, v1.2 RL state-based** : entraînés mais **AUCUN
-   n'est déployable**. Diagnostiqué via `deploy/eval2_inference.py` :
-   les success rates reportés pendant le training (jusqu'à 7.46% pour
-   v1.2) sont obtenus via l'exploration stochastique (PPO sample
-   mean+noise avec std≈3.7), pas par une vraie policy convergée. En
-   mode déploiement le success rate tombe à 0%.
+### Décision active
 
-2. **v1.3 (avorté à iter 3030/20k)** : tentative d'ajouter une pénalité
-   `action_l2 = -1e-2` pour stabiliser. Pas assez fort, std a explosé
-   à 4.65 — même piège que v1.2. Run arrêté.
+**Option A — BC ACT + DAPG end-to-end vision**. On abandonne (a) la
+piste scripted IK pour générer des démos en sim et (b) l'approche
+modulaire perception → policy state-based. La policy prend l'image
+wrist cam directement en input. Voir [section 0](#0-décision-archi-2026-05-05--end-to-end-vision--option-a-dapg).
 
-3. **v1.4 (full 20k iter, 6h17, COMPLÉTÉ)** : pénalité boostée à
-   `action_l2 = -1e-1` + `entropy_coef ÷6` + milestone sparse rewards
-   (grasp_success, above_bowl). Résultat : `std` reste à **0.40**
-   (PROBLÈME DE STABILITÉ RÉSOLU) **MAIS success rate plafonne à
-   2.41%**. La policy a "convergé" sur un mauvais comportement : elle
-   game les milestones intermédiaires (grasp brièvement, hover
-   au-dessus du bowl) sans jamais lâcher dans le bowl. Local optimum
-   classique avec milestones indépendants.
+⏳ **Bloqué sur** : les démos teleop Eval 2 que Federico va enregistrer
+fin de semaine.
 
-4. **Pour la suite (v1.5)** : plusieurs pistes envisagées, par ordre :
-   - **Milestones conditionnels** : chaîner grasp → above_bowl → success
-     pour empêcher le gaming
-   - **Boost massif success_bonus** : weight 200 → 2000+
-   - **BC warmstart** : recommandé par TA spec, le plus prometteur si
-     les options ci-dessus ne marchent pas
+### Historique condensé
 
-5. **v2 (caméra wrist)** : caméra présente dans la scène, calibrée. Tâches
-   `Eval2-PickInClutter-{,Play-}v2` enregistrées. **Lance toujours avec
-   `--enable_cameras`**.
+1. **v0–v1.4 PPO from-scratch state-based** : plafonne 2–7 % succès.
+   v1.4 a "convergé" sur un mauvais comportement (gaming milestones).
+   AUCUNE n'est déployable (chaotique en deploy ou local optimum).
 
-6. **Module perception CNN ENTRAÎNÉ ✅** : `ColorBlockCNN` à val_mae 0.87 cm
-   sur le dataset capturé. **MAIS** : ce dataset vient de la policy v1.2
-   chaotique. Quand on aura une vraie policy convergée (v1.5 ou BC), il
-   faudra **recapturer + retrain le CNN** avec la nouvelle distribution.
+2. **v2 (caméra wrist)** : caméra présente dans `Eval2-PickInClutter-v2`,
+   calibrée. **Toujours lancer avec `--enable_cameras`** maintenant qu'on
+   est end-to-end.
 
-7. **`deploy/eval2_inference.py` ÉCRIT ✅** : pipeline complet qui charge
-   policy + CNN, lit la cam wrist, substitue la perception aux positions
-   GT dans l'obs, fait tourner la policy. C'est le tooling qui a permis
-   tous les diagnostics v1.2/v1.3/v1.4.
+3. **Module perception CNN** (`sim/eval2/perception/`) : entraîné à
+   val_mae 0.87 cm, mais **mostly dead code** depuis le pivot end-to-end.
+   À garder comme warmstart potentiel du visual encoder de la policy
+   ACT, rien de plus.
 
-8. **Reste à faire pour points Eval 2** :
-   - **Avoir une policy à >50% success rate** (le bottleneck principal
-     actuel — pistes en point 4)
-   - **Recapture + retrain CNN** une fois la policy bonne
-   - **Domain randomization v3** (couleurs / textures / lumière) pour
-     sim-to-real
-   - **Test sur le vrai SO-101** : 5 rollouts au laboratoire
+4. **Scripted IK controller** (`sim/eval2/bc/`) : tentative abandonnée.
+   Math correcte (test FK→IK→FK 0.0001 mm) mais SO-101 5-DoF + limites
+   wrist_flex serrées → impossible de grasp fiable en sim. Audit
+   complet : [`notes/eval2_ik_retrospective.md`](../notes/eval2_ik_retrospective.md).
 
-## 16. Procédure deploy au robot réel (Eval 2 day)
+5. **`deploy/eval2_inference.py`** : pipeline existe mais **à refactor**
+   pour image-in-policy au lieu de CNN→state-policy.
+
+### Reste à faire (par ordre)
+
+1. ⏳ **Démos teleop Eval 2** (côté Federico, ~50–100 démos)
+2. **Push HF** dataset
+3. **BC pretrain ACT** end-to-end sur ces démos (~2h RTX 5070)
+4. **DAPG finetune** en sim avec image obs sur Brev H100 (~5–10h, $50–100)
+5. **Domain randomization v3** activée pendant DAPG (couleurs, lumière,
+   textures, frottements)
+6. **Refactor `deploy/eval2_inference.py`** pour image-in
+7. **Deploy 5 rollouts** sur SO-101 réel au labo
+8. **En parallèle** : Eval 1 (50 pts BC, pipeline sanity) au prochain
+   passage labo
+9. **Fallback** : Plan A reward shaping (milestones conditionnels +
+   success_bonus boost) à lancer en background sur RTX 5070 pendant
+   l'attente des démos. Si ça pète 30%+ succès state-based, on aura
+   un plan B.
+
+## 16. Procédure deploy au robot réel (Eval 2 day) — version end-to-end
 
 Le PDF dit explicitement que la position du bowl et la couleur cible sont **fournies
-en input** par les TAs — pas à détecter visuellement. Le seul truc à percevoir, ce
-sont les positions des blocs depuis la wrist cam.
+en input** par les TAs. Avec le pivot end-to-end, l'image wrist cam entre
+directement dans la policy — plus de module perception séparé qui extrait
+les block_xyz.
 
 ```
 1. Les TAs placent le bowl + 2 blocs colorés sur la table
@@ -836,19 +927,20 @@ sont les positions des blocs depuis la wrist cam.
    $ python deploy_eval2.py \
        --bowl_x=0.20 --bowl_y=-0.18 --bowl_z=0.02 \
        --target_color=red \
-       --policy=Rsebti/projet3-eval2-v1.x
+       --policy=Rsebti/projet3-eval2-vX
 5. Le script :
    - Lit joint_pos / joint_vel des servos Feetech à 30 Hz
-   - Capture l'image wrist cam, détecte block_red_xy et block_blue_xy via le
-     module de perception (HSV color filter ou détecteur entraîné)
-   - Concatène l'observation : joint_pos + joint_vel + block_red + block_blue
-     + bowl (constant, fourni en arg) + target_color (constant, fourni)
-     + last_action
-   - Inférence policy → action
+   - Capture l'image wrist cam (RGB)
+   - Concatène l'observation pour la policy end-to-end :
+       image (HxW x 3) + joint_pos + joint_vel + bowl_xyz (constant) +
+       target_color_one_hot (constant) + last_action
+   - Inférence policy → action 6-D
    - Envoie l'action aux servos
 6. Boucle jusqu'au succès ou time-out
 ```
 
-Le `deploy_eval2.py` reste à écrire — il sera structurellement identique au
-`deploy/inference.md` du sanity check, en remplaçant l'ACT par notre policy
-PPO Eval 2 et en injectant les inputs goal-conditionnés.
+`deploy_eval2.py` reste à écrire en partant de l'existant `eval2_inference.py`,
+en supprimant l'appel `PerceptionPipeline.predict()` et en passant l'image
+directement à la policy. Architecture policy probablement ACT (réutilise le
+checkpoint BC pretrain → DAPG finetune). Voir section 0 pour la stratégie
+end-to-end complète.
