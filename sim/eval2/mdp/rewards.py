@@ -256,3 +256,171 @@ def target_block_above_bowl(
     is_above_bowl = xy_dist < xy_threshold
 
     return (is_above & is_above_bowl).float()
+
+
+# ===========================================================================
+# v1.7 — Stage transition tracking (Action #1 from convergence_methods.md)
+#
+# Replaces the v1.4/v1.5 "independent milestone bonuses" with a single
+# stage-progression reward. Each env tracks the HIGHEST stage reached so far
+# in the episode (env.episode_max_stage). The reward at every step is the
+# value of that max stage. Once you reach a stage, you can't lose its reward
+# during the same episode (unless you regress, which is penalized).
+#
+# Why this beats independent bonuses (v1.4/v1.5):
+#   - PPO can't game by hovering an empty gripper above the bowl: it never
+#     reaches stage 4 without first reaching stage 2 (grasped) and 3 (lifted).
+#   - The reward landscape is monotonic in task progress: every step in the
+#     wrong direction loses its potential. PPO has no consolation plateau to
+#     stall on.
+#
+# Stages:
+#   0 default              nothing achieved
+#   1 approach             gripper close to target block
+#   2 grasped              gripper closed and at the block
+#   3 grasped + lifted     block held above the table
+#   4 grasped + above bowl block held + xy near bowl center
+#   5 success              block in bowl AND released
+# ===========================================================================
+def _ensure_stage_buffer(env: "ManagerBasedRLEnv") -> None:
+    """Lazily create env.episode_max_stage (per-env long tensor)."""
+    if not hasattr(env, "episode_max_stage"):
+        env.episode_max_stage = torch.zeros(
+            env.num_envs, dtype=torch.long, device=env.device
+        )
+
+
+def _compute_current_stage(
+    env: "ManagerBasedRLEnv",
+    gripper_closed_threshold: float = 0.15,
+    ee_to_block_threshold: float = 0.04,
+    approach_threshold: float = 0.05,
+    lift_threshold: float = 0.05,
+    above_bowl_xy_threshold: float = 0.10,
+    in_bowl_xy_threshold: float = 0.06,
+    in_bowl_z_max: float = 0.10,
+) -> torch.Tensor:
+    """Compute the per-env current task stage (long tensor (N,) in [0..5])."""
+    robot = env.scene["robot"]
+    bowl: RigidObject = env.scene["bowl_floor"]
+    ee_frame: FrameTransformer = env.scene["ee_frame"]
+
+    target_pos_w = _target_block_pos(env)                              # (N, 3)
+    bowl_pos_w = bowl.data.root_pos_w                                  # (N, 3)
+    ee_pos_w = ee_frame.data.target_pos_w[..., 0, :]                   # (N, 3)
+
+    # Grasp: gripper closed AND EE near target block
+    gripper_idx = robot.data.joint_names.index("gripper")
+    is_closed = robot.data.joint_pos[:, gripper_idx] < gripper_closed_threshold
+    ee_dist = torch.norm(ee_pos_w - target_pos_w, dim=1)
+    grasped = is_closed & (ee_dist < ee_to_block_threshold)            # (N,) bool
+
+    # Bowl placement geometry
+    xy_dist_bowl = torch.norm(target_pos_w[:, :2] - bowl_pos_w[:, :2], dim=1)
+    dz = target_pos_w[:, 2] - bowl_pos_w[:, 2]
+    in_bowl = (xy_dist_bowl < in_bowl_xy_threshold) & (dz > -0.01) & (dz < in_bowl_z_max)
+
+    # Stage assignments — each is 0 (not reached) or its index (reached).
+    s1 = (ee_dist < approach_threshold).long() * 1
+    s2 = grasped.long() * 2
+    lifted = (target_pos_w[:, 2] > lift_threshold).long()
+    s3 = grasped.long() * lifted * 3
+    s4 = grasped.long() * lifted * (xy_dist_bowl < above_bowl_xy_threshold).long() * 4
+    s5 = (in_bowl & ~grasped).long() * 5
+
+    return torch.stack([s1, s2, s3, s4, s5], dim=-1).max(dim=-1).values
+
+
+def stage_progress_reward(
+    env: "ManagerBasedRLEnv",
+    transition_bonuses: tuple[float, ...] = (0.0, 5.0, 20.0, 50.0, 100.0, 500.0),
+) -> torch.Tensor:
+    """One-shot bonus when the policy transitions to a NEW (higher) stage.
+
+    Returns ``transition_bonuses[new_stage]`` only on the step where
+    ``env.episode_max_stage`` strictly increases, otherwise 0. Updates the
+    buffer in place.
+
+    Why one-shot (delta) instead of constant per-step:
+        Per-step rewards on the max stage let the policy farm a low stage
+        forever. e.g. with weights (1, 5, 20, 100, 1000) per step and a
+        300-step horizon, "stage 4 max forever" yields 100*300 = 30 000
+        cumulative reward, while "reach stage 5 then terminate" yields
+        only 1 000 (since the success termination ends the episode at
+        step S < 300). The policy learns to never commit to the final
+        release. With one-shot transition bonuses, there is NO cumulative
+        advantage in dwelling on a stage — every reward only fires once
+        per episode, and the only way to maximize total reward is to
+        traverse all 5 transitions.
+
+    Pair with weight=1.0 in RewardsCfg. Bonuses heavily favour the final
+    transition (500 vs 100 for stage 4) so that committing to the success
+    sequence dominates any partial progress.
+    """
+    _ensure_stage_buffer(env)
+    current = _compute_current_stage(env)
+    transitioned = current > env.episode_max_stage
+    env.episode_max_stage = torch.maximum(env.episode_max_stage, current)
+    bonuses = torch.tensor(transition_bonuses, device=env.device, dtype=torch.float32)
+    return bonuses[current] * transitioned.float()
+
+
+def stage_regression_penalty(
+    env: "ManagerBasedRLEnv",
+) -> torch.Tensor:
+    """Penalty signal (1.0 per step) when the current stage drops below the
+    episode's high-water mark (e.g. block dropped after grasp).
+
+    Pair with a NEGATIVE weight (e.g. -10) in RewardsCfg. This creates the
+    recovery learning signal — without it, a drop just pauses the
+    stage_progress reward but doesn't actively punish.
+    """
+    _ensure_stage_buffer(env)
+    current = _compute_current_stage(env)
+    return (current < env.episode_max_stage).float()
+
+
+def target_block_above_bowl_conditional(
+    env: ManagerBasedRLEnv,
+    height_above: float = 0.05,
+    xy_threshold: float = 0.10,
+    gripper_closed_threshold: float = 0.15,
+    ee_to_block_threshold: float = 0.04,
+    bowl_cfg: SceneEntityCfg = SceneEntityCfg("bowl_floor"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+) -> torch.Tensor:
+    """Above-bowl reward CONDITIONAL on a successful grasp at the same step.
+
+    Returns 1 only when BOTH:
+      - the target block is hovering above the bowl (same condition as
+        ``target_block_above_bowl``), AND
+      - the gripper is currently grasping the target block (same condition
+        as ``target_block_grasped``).
+
+    This blocks the v1.4 gaming loop where the policy picked up the
+    "above_bowl" milestone reward by hovering an EMPTY gripper above the
+    bowl, never grasping anything. With the AND-gating, hovering without a
+    grasp scores 0, so PPO must grasp before it can collect the bonus.
+
+    See ``target_block_above_bowl`` and ``target_block_grasped`` for the
+    individual conditions. Pair with the same weight as the original
+    above_bowl term (e.g. 100).
+    """
+    # Above-bowl geometry condition
+    bowl: RigidObject = env.scene[bowl_cfg.name]
+    target_pos = _target_block_pos(env)
+    bowl_pos_w = bowl.data.root_pos_w
+    is_above = target_pos[:, 2] > bowl_pos_w[:, 2] + height_above
+    xy_dist = torch.norm(target_pos[:, :2] - bowl_pos_w[:, :2], dim=1)
+    is_above_bowl_geom = xy_dist < xy_threshold
+
+    # Grasp condition (gripper closed AND EE close to target block)
+    robot = env.scene["robot"]
+    ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
+    gripper_idx = robot.data.joint_names.index("gripper")
+    is_closed = robot.data.joint_pos[:, gripper_idx] < gripper_closed_threshold
+    ee_pos_w = ee_frame.data.target_pos_w[..., 0, :]
+    is_close = torch.norm(ee_pos_w - target_pos, dim=1) < ee_to_block_threshold
+    is_grasped = is_closed & is_close
+
+    return (is_above & is_above_bowl_geom & is_grasped).float()

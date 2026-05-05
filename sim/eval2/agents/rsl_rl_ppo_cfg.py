@@ -11,22 +11,20 @@ from isaaclab_rl.rsl_rl import (
 @configclass
 class Eval2PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
-    # 20 000 iter on RTX 5070 ~= 8-10 hours. Budget for the overnight robust
-    # convergence run. Target: std collapses below 0.5 and success rate
-    # climbs above 90 % under the FULL randomized task (cluster + bowl).
-    # If the policy doesn't converge by 5 k iter, it likely won't converge
-    # at all without architectural changes (BC warmstart, smaller action
-    # scale, hierarchical policy, etc.) — treat 5 k as the diagnostic point.
-    max_iterations = 20000
-    save_interval = 500  # 40 checkpoints over 20k iter
+    max_iterations = 10000
+    save_interval = 500
     experiment_name = "eval2_pick_in_bowl"
-    empirical_normalization = False
+    # Obs normalization stays — helps the critic regardless of reward shape.
+    empirical_normalization = True
+    # clip_actions stays at 1.0 — caps action magnitude without penalty.
+    clip_actions = 1.0
     policy = RslRlPpoActorCriticCfg(
-        # v1.4: lowered to 0.3 (was 0.5 in v1.3, 1.0 in v1.2). The two
-        # previous runs both blew std up — start with the smallest value
-        # that still allows initial exploration, so the optimizer has less
-        # ground to cover if it tries to expand.
-        init_noise_std=0.3,
+        # v1.7: 0.5 — the middle ground between v1.5 (0.3, too narrow:
+        # release never sampled) and v1.6 (1.0, too wide: std exploded to
+        # 4.2 in 1800 iter). With the stage_progress reward providing a
+        # MONOTONIC signal, the policy needs less random exploration to
+        # find progress — each step closer to the next stage is rewarded.
+        init_noise_std=0.5,
         actor_hidden_dims=[256, 128, 64],
         critic_hidden_dims=[256, 128, 64],
         activation="elu",
@@ -35,15 +33,15 @@ class Eval2PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        # v1.4: lowered from 0.006 to 0.001. The entropy bonus is the term
-        # that *encourages* PPO to keep std large; with 0.006 it overpowered
-        # our action_l2 penalty and std climbed from 0.5 to 4.65 in 3 k iter.
-        # Cutting entropy_coef 6x removes that upward pressure so the
-        # action_l2 penalty (-1e-1, see env config) can do its job.
-        entropy_coef=0.001,
+        # v1.7-A: 0.0005 (was 0.003). With the wide reaching_target kernel
+        # providing a strong dense signal, the entropy bonus is no longer
+        # needed to drive exploration — and at 0.003 it was inflating the
+        # std uncontrollably (1.24 -> 4.89 over 756 iter in v1.7). Cut by
+        # 6x to let the policy commit when the reward gradient says so.
+        entropy_coef=0.0005,
         num_learning_epochs=5,
         num_mini_batches=4,
-        learning_rate=1.0e-4,
+        learning_rate=3.0e-4,
         schedule="adaptive",
         gamma=0.98,
         lam=0.95,

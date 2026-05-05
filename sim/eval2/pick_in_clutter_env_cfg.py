@@ -193,6 +193,10 @@ class EventCfg:
 
     reset_all = EventTerm(func=mdp.reset_scene_to_default, mode="reset")
 
+    # v1.7: reset the per-env max-stage tracker so the stage_progress reward
+    # starts from stage 0 each episode.
+    reset_stage = EventTerm(func=mdp.reset_stage_buffer, mode="reset")
+
     # Sample a fresh target color (0=red, 1=blue) uniformly at every reset.
     randomize_target_color = EventTerm(
         func=mdp.reset_target_color,
@@ -233,101 +237,80 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
-    """Dense reward shaping, target-aware."""
+    """Stage-progression reward shaping (v1.7).
 
-    # Approach the target block (block size is 2.5 cm so std=0.05 is ~2 block widths).
+    Replaces the v1.4-v1.6 mix of dense + sparse milestone rewards with a
+    SINGLE stage_progress reward that monotonically tracks task progress.
+    Pattern from An et al., ETH 2025 (Stage Transition Graph + Dynamic
+    Reward Curriculum) — see notes in mdp/rewards.py.
+
+    Stages (per-env max tracked in env.episode_max_stage):
+      0 default (nothing)
+      1 approach (gripper near target block)
+      2 grasped
+      3 grasped + lifted (block above table)
+      4 grasped + above bowl (block xy near bowl center)
+      5 success (block in bowl AND gripper released)
+
+    The reward at every step is rewards_per_stage[max_stage_so_far]. Once you
+    hit a stage you keep its reward — the policy can't "forget" it within
+    the episode (unlike v1.4-v1.6 where dense rewards depended on instantaneous
+    state). PPO is forced to progress monotonically: there is no plateau on
+    stage-2 (grasped) that's better than progressing to stage-3 (lifted).
+    """
+
+    # v1.7-A: WIDE kernel + heavy weight. v1.7 had std=0.05 which means
+    # tanh(d/0.05) saturates at 1 for any d > ~10 cm — at the home pose
+    # the gripper is ~16 cm from the block, so reaching_reward = 1 - 1 = 0
+    # everywhere far from the block, and the gradient can't tell the
+    # policy to approach. With std=0.20 the gradient is non-trivial across
+    # the whole workspace: at d=16 cm, tanh(0.8)=0.66 -> reaching=0.34
+    # instead of 0.003. Weight bumped 6x (0.5 -> 3.0) so the ~300/episode
+    # cumulative reaching signal is comparable in magnitude to a stage 4-5
+    # transition (175-675), giving PPO a strong dense gradient before any
+    # stage is unlocked.
     reaching_target = RewTerm(
         func=mdp.target_block_ee_distance_tanh,
-        params={"std": 0.05},
+        params={"std": 0.20},
+        weight=3.0,
+    )
+
+    # Main signal: ONE-SHOT bonus at each stage transition. No cumulative
+    # advantage to dwelling on a low stage. The 500 bonus on stage 5
+    # transition dominates the 5+20+50+100=175 of all earlier transitions,
+    # and the 100 above_bowl bonus dominates the 75 of stages 1-3 — so
+    # the value gradient pushes monotonically toward success.
+    stage_progress = RewTerm(
+        func=mdp.stage_progress_reward,
+        params={
+            # transition into stage: (s0, s1, s2, s3, s4, s5)
+            "transition_bonuses": (0.0, 5.0, 20.0, 50.0, 100.0, 500.0),
+        },
         weight=1.0,
     )
 
-    # Two-stage lifting: a low threshold to easily reward "block off the table",
-    # plus a higher one to reward "block clears the bowl rim". The low threshold
-    # is critical for early training — without it lifting_target plateaus at ~0
-    # because the policy never randomly clears 5 cm.
-    lifting_target_low = RewTerm(
-        func=mdp.target_block_is_lifted,
-        params={"minimal_height": 0.025},  # ~ block height — easy to trigger
-        weight=10.0,
+    # Penalize regressions (e.g., dropping the block after grasp). Continuous
+    # signal: -10 per step while current_stage < episode_max_stage. Strong
+    # recovery learning signal — the policy is actively punished for losing
+    # progress, not just deprived of reward.
+    stage_regression = RewTerm(
+        func=mdp.stage_regression_penalty,
+        weight=-10.0,
     )
 
-    lifting_target_high = RewTerm(
-        func=mdp.target_block_is_lifted,
-        params={"minimal_height": 0.05},  # block clears the bowl walls
-        weight=10.0,
-    )
-
-    # Bring the block toward the bowl. Gated on the LOW lift threshold so the
-    # policy gets reward as soon as it lifts and moves laterally.
-    target_to_bowl_coarse = RewTerm(
-        func=mdp.target_block_to_bowl_distance_tanh,
-        params={"std": 0.30, "minimal_height": 0.025},
-        weight=16.0,
-    )
-
-    # BOOSTED for the long-convergence run: was 5.0. The fine-grained drop is
-    # the actual bottleneck (lifting + transport already work at iter ~500),
-    # so this term needs a louder voice to teach the policy to commit to a
-    # precise descent over the bowl.
-    target_to_bowl_fine = RewTerm(
-        func=mdp.target_block_to_bowl_distance_tanh,
-        params={"std": 0.05, "minimal_height": 0.025},
-        weight=25.0,
-    )
-
-    # ----- v1.4 milestone (sparse) rewards ----------------------------------
-    # The previous runs only had dense + final-success signals: PPO could
-    # plateau by maximizing the dense terms ("hover the block near the bowl
-    # forever") without ever committing to the actual sparse goal. These
-    # three milestones break the chain into intermediate snap-points so each
-    # phase has a clear, sparse reward of its own.
-
-    # +50 the first time the gripper actually grabs the target block.
-    grasp_success = RewTerm(
-        func=mdp.target_block_grasped,
-        params={"gripper_closed_threshold": 0.15, "ee_to_block_threshold": 0.04},
-        weight=50.0,
-    )
-
-    # +100 the first time the target block is hovering above the bowl
-    # (within 10 cm xy of bowl center, at least 5 cm above bowl top).
-    above_bowl = RewTerm(
-        func=mdp.target_block_above_bowl,
-        params={"height_above": 0.05, "xy_threshold": 0.10},
-        weight=100.0,
-    )
-
-    # +200 when the target block is fully placed inside the bowl (the actual
-    # task success criterion). Largest single-term reward so PPO learns to
-    # value it above all the dense intermediate rewards combined.
-    success_bonus = RewTerm(
-        func=mdp.target_block_in_bowl,
-        params={"xy_threshold": BOWL_INNER_HALF, "z_max_above_bowl": 0.10},
-        weight=200.0,
-    )
-
-    # Discourage moving the wrong block.
+    # Discourage moving the wrong block (kept from v1.4-v1.6).
     distractor_disturbed = RewTerm(
         func=mdp.distractor_block_disturbed,
         params={"height_threshold": 0.025},
         weight=-5.0,
     )
 
-    # Smoothness penalties + action magnitude regularization.
-    # action_rate (penalize abrupt changes between consecutive actions) was
-    # already there. action_l2 is NEW: it penalizes the magnitude of each
-    # action directly, so the actor mean is pulled toward small values
-    # instead of saturating the joint targets at +/-7.5 rad after the 0.5
-    # action scale.
-    #
-    # action_l2 weight bumped from -1e-2 to -1e-1 (v1.4): the previous run
-    # showed std blowing up from 0.5 -> 4.65 by iter 3030, which means the
-    # entropy bonus + reward landscape ambiguity was overpowering the -1e-2
-    # action penalty. 10x stronger penalty now creates a much clearer
-    # gradient toward "small actions" so PPO can commit to a tight policy.
+    # Light smoothness penalties. action_l2 reduced from v1.6's -5e-3 (too
+    # strong: 5 release steps cost ~25, marginal vs uncertain success bonus)
+    # back to -1e-3 — same as v1.6 which was diagnosed NOT to be the std
+    # explosion cause (that was the milestone race; now solved by stages).
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-1e-3)
-    action_l2 = RewTerm(func=mdp.action_l2_norm, weight=-1e-1)
+    action_l2 = RewTerm(func=mdp.action_l2_norm, weight=-1e-3)
     joint_vel = RewTerm(
         func=mdp.joint_vel_l2,
         weight=-1e-4,

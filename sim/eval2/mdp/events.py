@@ -14,6 +14,22 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+def reset_stage_buffer(env: ManagerBasedRLEnv, env_ids: torch.Tensor) -> None:
+    """Reset env.episode_max_stage to 0 for the resetting envs (v1.7).
+
+    Pairs with rewards.stage_progress_reward, which tracks the highest stage
+    each env has reached during the current episode. On reset, the buffer
+    must drop back to 0 so the new episode starts fresh.
+    """
+    if not hasattr(env, "episode_max_stage"):
+        env.episode_max_stage = torch.zeros(
+            env.num_envs, dtype=torch.long, device=env.device
+        )
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    env.episode_max_stage[env_ids] = 0
+
+
 def reset_target_color(env: ManagerBasedRLEnv, env_ids: torch.Tensor, num_classes: int = 2) -> None:
     """Sample a new target color index (uniform integer in [0, num_classes)) for the resetting envs.
 
