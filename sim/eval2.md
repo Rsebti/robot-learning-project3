@@ -267,51 +267,120 @@ Files (`sim/eval2/perception/`) :
      bougera le bras de la même façon).
    - Pas besoin de calibrer une scan pose.
 
-### v1.3 — convergence run overnight (en cours, mise à jour 2026-05-04 23h)
+### v1.3 — première tentative de convergence (ABORTÉE à iter 3030)
 
-**Diagnostic post-deploy** : en lançant le checkpoint v1.2 dans le pipeline complet
-(`deploy/eval2_inference.py`), on a découvert que **la policy v1.2 n'est PAS
-convergée**. Le checkpoint contient un `std` énorme (~3.7) — le PPO explorait
-encore massivement à iter 999. Les "7.46% success" du training sont obtenus
-PAR HASARD via l'exploration aléatoire (mean × bruit), pas par une policy
-qui a appris la tâche. En mode déterministe (act_inference, sans bruit) ou
-même en sampling, le success rate retombe à 0%.
+**Diagnostic préalable post-deploy** : en lançant le checkpoint v1.2 dans
+`deploy/eval2_inference.py`, on a découvert que **la policy v1.2 n'est PAS
+convergée**. Le checkpoint contient un `std` énorme (~3.7). Les "7.46%
+success" du training sont obtenus PAR HASARD via l'exploration aléatoire
+(mean × bruit), pas par une policy qui a appris la tâche. En mode déploiement
+(déterministe ou sampling), le success rate retombe à 0%.
 
 **Cause racine** : sans pénalité explicite sur la magnitude des actions, le
-gradient PPO a poussé `mean` vers ±15 (= joints saturés à ±7.5 rad après le
+gradient PPO a poussé `mean` vers ±15 (joints saturés à ±7.5 rad après le
 scale 0.5). La reward landscape ne pouvait plus distinguer les bonnes des
 mauvaises actions → `std` n'a jamais convergé.
 
 **Modifs config v1.3** :
 | Aspect | v1.2 | v1.3 |
 |---|---|---|
-| `target_to_bowl_fine` weight | 5 | **25** (forcer placement précis) |
-| `success_bonus` weight | 100 | **200** (signal de réussite plus fort) |
-| `action_rate_l2` weight | -1e-4 | **-1e-3** (smoothness 10× plus forte) |
-| **`action_l2_norm` reward (NEW)** | absent | **-1e-2** (empêche actions saturées) |
-| `init_noise_std` | 1.0 | **0.5** (start moins explorateur) |
-| `entropy_coef` | 0.006 | inchangé (défaut stable) |
-| `max_iterations` | 1000 | **20 000** (8-10h overnight) |
-| `save_interval` | 100 | 500 (40 checkpoints sur 20k) |
-| Bowl rand | ±4 cm x, ±2 cm y | inchangé |
+| `target_to_bowl_fine` weight | 5 | **25** |
+| `success_bonus` weight | 100 | **200** |
+| `action_rate_l2` weight | -1e-4 | **-1e-3** |
+| **`action_l2_norm` reward (NEW)** | absent | **-1e-2** |
+| `init_noise_std` | 1.0 | **0.5** |
+| `entropy_coef` | 0.006 | inchangé (0.006) |
+| `max_iterations` | 1000 | **20 000** |
 
-**Cible** : success rate sim ≥ 70 %, idéalement 90 %+, avec `std` < 0.5
-en fin de training (= policy convergée, déployable en mode déterministe).
+**Résultat (arrêté à iter 3030 / 20000)** :
+| Iter | std | success |
+|---|---|---|
+| 5 | 0.49 | — |
+| 441 | 0.74 | 2.85% |
+| 1473 | **1.98** ⚠️ | 0.89% |
+| 2912 | **4.41** ⚠️ | 1.40% |
+| 3030 | **4.65** ⚠️ | 2.36% (et lifting commence à régresser) |
 
-**Commande** :
-```powershell
-uv run python -m sim.eval2.scripts.train --task Eval2-PickInClutter-v1 \
-    --headless --num_envs 4096 --max_iterations 20000
-```
+→ **Échec du même type que v1.2** : `std` explose, policy se met à explorer
+chaotiquement au lieu de convergir. L'`action_l2 = -1e-2` était trop faible
+pour contrebalancer l'`entropy_coef = 0.006`. Run arrêté avant qu'il aille
+plus loin.
 
-(On entraîne sur **v1**, PAS v2 : v2 ne diffère que par la cam dans la scène,
-qui ne change rien à la policy state-based mais ralentit le training de 3-5×.)
+### v1.4 — convergence stable mais policy gamée (RUN COMPLÉTÉ, 6h17, 2.41% succ)
 
-**Note importante pour la suite** : si v1.3 converge, on devra re-capturer
-le dataset de perception avec ce nouveau checkpoint (la distribution de
-viewpoints sera très différente : moins chaotique, plus représentative du
-vrai déploiement). Le CNN actuel a été entraîné sur des viewpoints issus
-de la policy v1.2 chaotique → biais hérité.
+**Modifs vs v1.3** :
+| Aspect | v1.3 | v1.4 |
+|---|---|---|
+| `action_l2_norm` weight | -1e-2 | **-1e-1** (×10 plus fort) |
+| `entropy_coef` | 0.006 | **0.001** (÷6) |
+| `init_noise_std` | 0.5 | **0.3** |
+| Nouveaux milestone rewards | absents | **`grasp_success` +50, `above_bowl` +100** |
+
+**Résultat (full 20 000 iter, 6h17)** :
+| Métrique | Valeur finale |
+|---|---|
+| **`std`** | **0.40** ✅ (PROBLÈME RÉSOLU) |
+| `Mean reward` | 948.65 (gros, mais trompeur — voir plus bas) |
+| `lifting_target_low/high` | 8.6 / 8.5 (bonnes valeurs denses) |
+| `target_to_bowl_coarse` | 7.7 |
+| `target_to_bowl_fine` | 0.25 |
+| `grasp_success` (max=15000/ép) | **47** (≈0.3% des frames) |
+| `above_bowl` (max=30000/ép) | **82** (≈0.3% des frames) |
+| `success_bonus` (max=60000/ép) | **0.014** (quasi nul) |
+| `distractor_disturbed` | -0.01 ✅ |
+| `block_dropped` | 0% ✅ |
+| **`Episode_Termination/success`** | **2.41%** ❌ (même score que v1.3 chaotique) |
+
+**Diagnostic** : la policy a "convergé" — au sens où `std` est sain (0.40)
+et le comportement est stable, déterministe — mais elle a convergé sur **un
+mauvais comportement**. Elle a découvert qu'elle peut accumuler ~130 points
+de "consolation" par épisode via les milestones intermédiaires sans jamais
+risquer le placement final :
+
+- elle s'**approche** du bloc (reaching_target = 0.63)
+- elle **touche** le grasp brièvement (47/15000 = 0.3% des frames)
+- elle **survole** le bowl quelques frames (82/30000 = 0.3% des frames)
+- elle **ne lâche jamais dans le bowl** (0.014/60000 = ~0%)
+
+C'est le **classique problème du local optimum** quand les milestones sparse
+sont **indépendants** : la policy peut gamer chacun sans faire la séquence
+complète. Le success_bonus +200 (qui ne s'active que rarement) ne pèse pas
+assez face aux 130 points consolation systématiques.
+
+### Comparaison globale (toutes les versions)
+
+| Run | iter | std final | succ rate | déployable ? |
+|---|---|---|---|---|
+| v1.2 | 1000 | **3.7** ❌ | 7.46% (= bruit) | non — chaotique en deploy |
+| v1.3 | 3030 (arrêté) | **4.65** ❌ | 2.36% | non — chaotique en deploy |
+| **v1.4** | **20 000** | **0.40** ✅ | **2.41%** | techniquement oui mais inutile à 2% |
+
+→ On a appris à **stabiliser le training** (v1.4 résout v1.2/1.3) mais
+**pas à atteindre un haut success rate**. C'est un problème différent qui
+demande une approche différente.
+
+### v1.5 — pistes prévues (à choisir lors de la prochaine session)
+
+Trois directions possibles, par ordre de simplicité :
+
+1. **Milestones conditionnels** (~30 min) : `above_bowl` ne s'active que SI
+   `grasp_success` est actif au même step. `success_bonus` ne compte que
+   suite à `above_bowl`. Empêche le gaming des milestones indépendants.
+2. **Boost massif success_bonus** (~5 min) : weight 200 → 2000+. Force la
+   policy à viser le succès au-dessus de tout.
+3. **BC warmstart** (~quelques heures) : écrire un scripted controller avec
+   IK, générer des demos en sim, BC pretrain, puis PPO finetune. Approche
+   éprouvée en RL manipulation, recommandée par la TA spec
+   ("Expert teleop data is encouraged").
+
+Plan prévu pour la prochaine session :
+- Tester rapidement les options 1+2 combinées (1h de code + 4h training)
+- Si toujours <30 % success → bascule sur option 3 BC warmstart
+
+**Note importante pour la suite (perception)** : le CNN actuel a été entraîné
+sur la distribution de viewpoints de la policy v1.2 chaotique. Si on obtient
+une policy correcte (option 1+2 ou BC warmstart), il faudra **re-capturer le
+dataset perception** avec ce nouveau checkpoint et **retrain le CNN**.
 
 ---
 
@@ -588,96 +657,84 @@ tensorboard --logdir <isaac_so_arm101>/logs/rsl_rl/eval2_pick_in_bowl
 
 ## 13. Que faire ensuite (par où continuer)
 
-5 chantiers possibles, classés par priorité / ROI. Tu peux les attaquer dans
-n'importe quel ordre, ils sont largement indépendants.
+**Mise à jour 2026-05-05** : le bottleneck principal n'est plus
+l'install/structure mais **obtenir une policy à >50% success rate**.
+Les pistes B (caméra/perception) ont été faites avec succès. Le pipeline
+deploy existe. Il reste juste le RL qui ne converge pas vers une vraie
+solution.
 
-### Piste A — Pousser v1.2 plus loin (le plus simple, ~30 min - 1 h)
+### Piste A — Améliorer le reward shaping (~1 h de code + 4 h training)
 
-Le run baseline est arrêté à 1000 iter, encore en phase d'apprentissage actif
-(`action_noise_std` à 3.7 = exploration en cours). Trois leviers à essayer :
+v1.4 a montré que la policy game les milestones sparse indépendants.
+Deux corrections qui se cumulent :
 
-**A.1 — Plus d'itérations** :
-```powershell
-uv run python -m sim.eval2.scripts.train \
-    --task Eval2-PickInClutter-v1 --headless --num_envs 4096 \
-    --max_iterations 5000
-```
-Si la courbe `success_bonus` continue de monter → on a juste manqué de temps.
+**A.1 — Milestones conditionnels** :
+Dans `sim/eval2/mdp/rewards.py`, modifier `target_block_above_bowl` pour
+ne renvoyer 1 que SI `target_block_grasped` est aussi 1 au même step.
+Et `target_block_in_bowl` (success_bonus) ne devrait compter que si la
+policy était `above_bowl` au step précédent. Ça force la **séquence** :
+impossible de toucher l'étape 2 sans avoir fait l'étape 1.
 
-**A.2 — Boost du reward `target_to_bowl_fine`** :
-Dans `sim/eval2/pick_in_clutter_env_cfg.py`, augmenter le `weight` de
-`target_to_bowl_fine` de **5 à 15**. Force la policy à se concentrer sur la
-descente précise. Re-train.
+**A.2 — Boost massif success_bonus** :
+Passer le weight de 200 à **2000**. Un seul succès vaut alors plus que
+TOUTE l'accumulation des milestones intermédiaires. PPO sera contraint
+de viser le succès.
 
-**A.3 — Curriculum sur le bowl rand** :
-Dans `EventCfg.randomize_bowl_position`, démarrer avec un range étroit
-(`x: (-0.01, 0.01), y: (-0.005, 0.005)`), entraîner 500 iter, puis élargir
-progressivement. Plus stable que d'attaquer la randomization complète d'un coup.
+Re-train 10k iter (~3-4h) avec ces deux modifs combinées. Si succès
+rate >30 % → on continue à raffiner. Si toujours <10 % → bascule sur D.
 
-### Piste B — Implémenter v2 (caméra + perception modulaire) ← le gros morceau
+### Piste B — ~~Implémenter v2 (caméra + perception)~~ ✅ FAIT
+- `Eval2PickInClutterEnvCfg_v2` dans `sim/eval2/joint_pos_env_cfg.py`
+- Module `sim/eval2/perception/` avec CNN entraîné (val_mae 0.87 cm)
+- Pipeline `deploy/eval2_inference.py` qui branche tout
+- ⚠️ Le CNN actuel est entraîné sur les viewpoints de v1.2 chaotique →
+  à recapturer + retrain quand on aura une bonne policy.
 
-C'est le **dernier vrai écart au PDF** ("policy must operate on visual observation
-of blocks"). Approche modulaire (autorisée par les TAs) : la policy reste
-state-based, mais les positions des blocs viennent d'un module de perception
-au lieu du ground-truth.
+### Piste B — BC warmstart (~quelques heures, le plus prometteur si A ne suffit pas)
 
-**Étapes** :
+Approche éprouvée en RL manipulation, **explicitement recommandée par la TA spec** :
+> "Expert teleop data is encouraged for training efficiency."
 
-1. **Ajouter une `CameraCfg` à la scène**
-   Dans `sim/eval2/joint_pos_env_cfg.py`, à côté de `ee_frame`, ajouter :
-   ```python
-   from isaaclab.sensors import CameraCfg
-   self.scene.wrist_cam = CameraCfg(
-       prim_path="{ENV_REGEX_NS}/Robot/gripper_link/wrist_cam",
-       update_period=0.1,  # 10 Hz
-       width=84, height=84,
-       data_types=["rgb"],
-       spawn=sim_utils.PinholeCameraCfg(
-           focal_length=24.0, focus_distance=400.0,
-           horizontal_aperture=20.955,
-       ),
-       offset=CameraCfg.OffsetCfg(
-           pos=(0.05, 0.0, 0.0),  # à ajuster avec la pose réelle de la cam
-           rot=(0.5, -0.5, 0.5, -0.5),
-       ),
-   )
-   ```
-   ⚠️ Bug Blackwell connu : utiliser `Camera` standard, pas `TiledCamera`
-   (cf. `notes/isaac_lab_setup.md`).
+Étapes :
 
-2. **Écrire un module de perception** dans `sim/eval2/perception/`
-   - Le plus simple : **HSV color filter** (OpenCV). Convertit RGB en HSV,
-     seuille sur les ranges rouge et bleu, calcule le centroid 2D pixel.
-   - Pour passer du pixel xy à xyz monde : **calibration extrinsèque
-     caméra-bras** (à mesurer une fois physiquement avec un ChAruco board).
-   - Alternative plus robuste : YOLOv8-tiny entraîné sur des renders sim.
+1. **Scripted controller** (~3-4h de code) : algorithme déterministe avec IK
+   inverse qui fait pick-and-place :
+   - Lire `target_color`, identifier le bon bloc
+   - IK pour positionner gripper au-dessus du bloc cible
+   - Descendre, fermer gripper
+   - Lever, IK vers position au-dessus du bowl
+   - Descendre, ouvrir gripper
 
-3. **Adapter les observations** dans `sim/eval2/mdp/observations.py`
-   Pendant le training en sim, on peut continuer à donner le ground-truth
-   (gratuit). On ajoute juste l'image en plus pour entraîner la perception
-   séparément. Au déploiement, on remplacera le ground-truth par la sortie
-   de la perception (mêmes shapes, mêmes ranges).
+2. **Generate démos** (~30 min) : rouler le scripted controller dans 4096 envs
+   en parallèle pendant 1000 episodes, sauvegarder (obs, action) à chaque step.
+   → Dataset de ~10 000 démos.
+
+3. **BC pretrain** (~1h) : entraîner la même architecture actor-critic
+   (256-128-64 MLP) en imitation learning sur ce dataset.
+
+4. **PPO finetune** (~3-5h) : reprendre le checkpoint BC, finetune avec
+   PPO. Dramatiquement plus rapide à converger qu'un PPO from-scratch.
+
+→ Avec un peu de chance, success rate **60-80%** dans la journée.
 
 ### Piste C — Domain randomization (v3, sim-to-real)
 
-À faire en parallèle de la perception. Dans `EventCfg`, ajouter des events
-qui s'exécutent à chaque reset :
-- `randomize_block_colors` : tirer la teinte des deux blocs dans des plages
-  rouge/bleu plus larges
-- `randomize_table_friction` : varier le coefficient de frottement table-bloc
+UNIQUEMENT pertinent quand on aura une bonne policy + perception. Dans
+`EventCfg`, ajouter des events qui s'exécutent à chaque reset :
+- `randomize_block_colors` : teintes rouge/bleu dans des plages plus larges
+- `randomize_table_friction` : varier le frottement table-bloc
 - `randomize_lighting` : varier intensité et direction du `DomeLight`
 - `randomize_robot_initial_pose` : petite noise sur la pose home
 
 → La policy entraînée sur ces variations devient robuste au transfert réel.
 
-### Piste D — Écrire le script de deploy au robot réel
+### Piste D — Recapture + retrain perception
 
-Voir section 15 pour le scaffolding. Tâches concrètes :
-1. Créer `deploy/eval2_inference.py` (s'inspirer de `deploy/inference.md` du
-   sanity check)
-2. Ajouter les flags CLI `--bowl_x --bowl_y --bowl_z --target_color --policy`
-3. Brancher la perception (à la place du ground-truth)
-4. Tester sur le SO-101 réel sur 5 rollouts
+Une fois la policy convergée (par A ou B), **lancer**
+`capture_with_policy.py` avec le nouveau checkpoint, puis `train.py`. Le
+CNN actuel est entraîné sur les viewpoints de v1.2 chaotique → biais
+hérité. Avec une policy qui fait des trajectoires propres, le dataset
+sera beaucoup plus représentatif du déploiement réel.
 
 ### Piste E — Faire Eval 1 en parallèle (gains rapides, 50 pts)
 
@@ -689,6 +746,15 @@ pipeline du sanity check, juste avec :
 
 C'est plus simple que de tout finir Eval 2, et ça vaut autant de points.
 **Si tu n'as qu'une journée au robot, fais Eval 1 d'abord.**
+
+### Piste F — Test au vrai SO-101 (à la fin)
+
+Une fois la policy >50% en sim ET le CNN recapturé :
+- Brancher `deploy/eval2_inference.py` sur le vrai robot (remplacer la
+  source de joint_state et de cam par lerobot)
+- 5 rollouts au laboratoire avec différentes positions de blocs/bowl
+  fournies par les TAs
+- Mesure du success rate réel
 
 ---
 
@@ -705,38 +771,54 @@ C'est plus simple que de tout finir Eval 2, et ça vaut autant de points.
 
 ## 15. TL;DR pour quelqu'un qui débarque
 
-État au **2026-05-04 fin de soirée** :
+État au **2026-05-05 matin** :
 
-1. **v0, v1, v1.1, v1.2 RL state-based** : tous fonctionnels mais le
-   **checkpoint v1.2 N'EST PAS DÉPLOYABLE** — diagnostiqué via le
-   pipeline complet `deploy/eval2_inference.py`. Le success rate
-   "7.46 %" reporté pendant le training vient de l'exploration
-   stochastique (PPO sample mean+noise avec std≈3.7), pas d'une vraie
-   policy convergée. En mode déploiement (déterministe ou même
-   sampling), le success rate retombe à 0 % parce que la policy n'a
-   jamais appris à exploiter — elle ne fait qu'explorer.
-2. **v1.3 EN TRAINING (overnight, ~20k iter)** : nouvelle config qui
-   ajoute une pénalité `action_l2` pour empêcher les actions saturées,
-   booste les rewards de placement précis, et tourne 20× plus long.
-   Cible : `std` < 0.5 et success rate ≥ 70 % en mode déterministe.
-3. **v2 (caméra wrist)** : caméra présente dans la scène, calibrée. Tâches
+1. **v0, v1, v1.1, v1.2 RL state-based** : entraînés mais **AUCUN
+   n'est déployable**. Diagnostiqué via `deploy/eval2_inference.py` :
+   les success rates reportés pendant le training (jusqu'à 7.46% pour
+   v1.2) sont obtenus via l'exploration stochastique (PPO sample
+   mean+noise avec std≈3.7), pas par une vraie policy convergée. En
+   mode déploiement le success rate tombe à 0%.
+
+2. **v1.3 (avorté à iter 3030/20k)** : tentative d'ajouter une pénalité
+   `action_l2 = -1e-2` pour stabiliser. Pas assez fort, std a explosé
+   à 4.65 — même piège que v1.2. Run arrêté.
+
+3. **v1.4 (full 20k iter, 6h17, COMPLÉTÉ)** : pénalité boostée à
+   `action_l2 = -1e-1` + `entropy_coef ÷6` + milestone sparse rewards
+   (grasp_success, above_bowl). Résultat : `std` reste à **0.40**
+   (PROBLÈME DE STABILITÉ RÉSOLU) **MAIS success rate plafonne à
+   2.41%**. La policy a "convergé" sur un mauvais comportement : elle
+   game les milestones intermédiaires (grasp brièvement, hover
+   au-dessus du bowl) sans jamais lâcher dans le bowl. Local optimum
+   classique avec milestones indépendants.
+
+4. **Pour la suite (v1.5)** : plusieurs pistes envisagées, par ordre :
+   - **Milestones conditionnels** : chaîner grasp → above_bowl → success
+     pour empêcher le gaming
+   - **Boost massif success_bonus** : weight 200 → 2000+
+   - **BC warmstart** : recommandé par TA spec, le plus prometteur si
+     les options ci-dessus ne marchent pas
+
+5. **v2 (caméra wrist)** : caméra présente dans la scène, calibrée. Tâches
    `Eval2-PickInClutter-{,Play-}v2` enregistrées. **Lance toujours avec
    `--enable_cameras`**.
-4. **Module perception CNN ENTRAÎNÉ ✅** : `ColorBlockCNN` à val_mae 0.87 cm
+
+6. **Module perception CNN ENTRAÎNÉ ✅** : `ColorBlockCNN` à val_mae 0.87 cm
    sur le dataset capturé. **MAIS** : ce dataset vient de la policy v1.2
-   chaotique. Si v1.3 converge, **il faudra recapturer + retrain le CNN**
-   avec la nouvelle distribution de viewpoints (plus propre, plus
-   représentative).
-5. **`deploy/eval2_inference.py` ÉCRIT ✅** : pipeline complet qui charge
+   chaotique. Quand on aura une vraie policy convergée (v1.5 ou BC), il
+   faudra **recapturer + retrain le CNN** avec la nouvelle distribution.
+
+7. **`deploy/eval2_inference.py` ÉCRIT ✅** : pipeline complet qui charge
    policy + CNN, lit la cam wrist, substitue la perception aux positions
-   GT dans l'obs, fait tourner la policy. A permis le diagnostic v1.2.
-6. **Pipeline complet à valider quand v1.3 sera prête** :
-   - Récupérer le meilleur checkpoint v1.3
-   - Recapture dataset perception avec `capture_with_policy.py`
-   - Retrain CNN
-   - Re-test `deploy/eval2_inference.py` avec et sans `--use_ground_truth`
-7. **Reste à faire après ça pour points Eval 2** :
-   - **Domain randomization v4** (couleurs / textures / lumière) pour
+   GT dans l'obs, fait tourner la policy. C'est le tooling qui a permis
+   tous les diagnostics v1.2/v1.3/v1.4.
+
+8. **Reste à faire pour points Eval 2** :
+   - **Avoir une policy à >50% success rate** (le bottleneck principal
+     actuel — pistes en point 4)
+   - **Recapture + retrain CNN** une fois la policy bonne
+   - **Domain randomization v3** (couleurs / textures / lumière) pour
      sim-to-real
    - **Test sur le vrai SO-101** : 5 rollouts au laboratoire
 
