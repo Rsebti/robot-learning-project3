@@ -188,3 +188,71 @@ def action_l2_norm(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
     actions = env.action_manager.action  # (num_envs, action_dim)
     return torch.linalg.norm(actions, dim=-1)
+
+
+# ---------------------------------------------------------------------------
+# v1.4 milestone rewards: explicit sparse signals at the key task waypoints
+# (grasp succeeded, block lifted above bowl, block dropped in bowl).
+# Without these, PPO only sees a smooth dense reward landscape and can't
+# tell that the "grasp -> lift -> place" chain is the actual goal — it just
+# tries to maximize the sum of dense terms, which favors hovering near the
+# bowl forever.
+# ---------------------------------------------------------------------------
+def target_block_grasped(
+    env: ManagerBasedRLEnv,
+    gripper_closed_threshold: float = 0.15,
+    ee_to_block_threshold: float = 0.04,
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+) -> torch.Tensor:
+    """Binary signal — gripper is closed AND the target block is within
+    ``ee_to_block_threshold`` of the end-effector frame.
+
+    A reasonable proxy for "the target block is currently being held":
+    gripper joint position below the closed threshold means the jaws are
+    pressing on something, and a small EE-to-block distance means that
+    something is the block.
+
+    Pairs with a *positive* weight (e.g. 50) in ``RewardsCfg`` to give a
+    clear sparse signal when the policy first achieves a successful grasp,
+    even before any lifting.
+    """
+    robot = env.scene["robot"]
+    ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
+
+    # Gripper joint position (binary action open=0.5, close=0.0 in our cfg).
+    gripper_idx = robot.data.joint_names.index("gripper")
+    gripper_pos = robot.data.joint_pos[:, gripper_idx]
+    is_closed = gripper_pos < gripper_closed_threshold
+
+    # Distance from end-effector to target block (in world frame).
+    target_pos_w = _target_block_pos(env)
+    ee_pos_w = ee_frame.data.target_pos_w[..., 0, :]
+    dist = torch.norm(ee_pos_w - target_pos_w, dim=1)
+    is_close = dist < ee_to_block_threshold
+
+    return (is_closed & is_close).float()
+
+
+def target_block_above_bowl(
+    env: ManagerBasedRLEnv,
+    height_above: float = 0.05,
+    xy_threshold: float = 0.10,
+    bowl_cfg: SceneEntityCfg = SceneEntityCfg("bowl_floor"),
+) -> torch.Tensor:
+    """Binary signal — target block is at least ``height_above`` meters above
+    the bowl's z, AND its xy is within ``xy_threshold`` of the bowl center.
+
+    Triggers right before the placement: the policy is hovering the block
+    over the bowl, ready to drop. Pairs with a positive weight (e.g. 100) to
+    encourage the policy to bring the block to that staging position before
+    the final release.
+    """
+    bowl: RigidObject = env.scene[bowl_cfg.name]
+    target_pos = _target_block_pos(env)
+    bowl_pos_w = bowl.data.root_pos_w
+
+    is_above = target_pos[:, 2] > bowl_pos_w[:, 2] + height_above
+    xy_dist = torch.norm(target_pos[:, :2] - bowl_pos_w[:, :2], dim=1)
+    is_above_bowl = xy_dist < xy_threshold
+
+    return (is_above & is_above_bowl).float()

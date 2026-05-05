@@ -276,9 +276,31 @@ class RewardsCfg:
         weight=25.0,
     )
 
-    # Sparse success bonus. Boosted again so a single successful placement
-    # dominates the per-episode reward signal and PPO clearly prefers it over
-    # the 'stay near the bowl forever without releasing' local optimum.
+    # ----- v1.4 milestone (sparse) rewards ----------------------------------
+    # The previous runs only had dense + final-success signals: PPO could
+    # plateau by maximizing the dense terms ("hover the block near the bowl
+    # forever") without ever committing to the actual sparse goal. These
+    # three milestones break the chain into intermediate snap-points so each
+    # phase has a clear, sparse reward of its own.
+
+    # +50 the first time the gripper actually grabs the target block.
+    grasp_success = RewTerm(
+        func=mdp.target_block_grasped,
+        params={"gripper_closed_threshold": 0.15, "ee_to_block_threshold": 0.04},
+        weight=50.0,
+    )
+
+    # +100 the first time the target block is hovering above the bowl
+    # (within 10 cm xy of bowl center, at least 5 cm above bowl top).
+    above_bowl = RewTerm(
+        func=mdp.target_block_above_bowl,
+        params={"height_above": 0.05, "xy_threshold": 0.10},
+        weight=100.0,
+    )
+
+    # +200 when the target block is fully placed inside the bowl (the actual
+    # task success criterion). Largest single-term reward so PPO learns to
+    # value it above all the dense intermediate rewards combined.
     success_bonus = RewTerm(
         func=mdp.target_block_in_bowl,
         params={"xy_threshold": BOWL_INNER_HALF, "z_max_above_bowl": 0.10},
@@ -297,10 +319,15 @@ class RewardsCfg:
     # already there. action_l2 is NEW: it penalizes the magnitude of each
     # action directly, so the actor mean is pulled toward small values
     # instead of saturating the joint targets at +/-7.5 rad after the 0.5
-    # action scale. Without this, PPO has no direct pressure to keep actions
-    # in a sane range.
+    # action scale.
+    #
+    # action_l2 weight bumped from -1e-2 to -1e-1 (v1.4): the previous run
+    # showed std blowing up from 0.5 -> 4.65 by iter 3030, which means the
+    # entropy bonus + reward landscape ambiguity was overpowering the -1e-2
+    # action penalty. 10x stronger penalty now creates a much clearer
+    # gradient toward "small actions" so PPO can commit to a tight policy.
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-1e-3)
-    action_l2 = RewTerm(func=mdp.action_l2_norm, weight=-1e-2)
+    action_l2 = RewTerm(func=mdp.action_l2_norm, weight=-1e-1)
     joint_vel = RewTerm(
         func=mdp.joint_vel_l2,
         weight=-1e-4,

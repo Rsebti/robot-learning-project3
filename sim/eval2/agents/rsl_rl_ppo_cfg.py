@@ -22,11 +22,11 @@ class Eval2PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     experiment_name = "eval2_pick_in_bowl"
     empirical_normalization = False
     policy = RslRlPpoActorCriticCfg(
-        # Lowered from 1.0 — the previous 1k-iter run drove std UP to ~3.7
-        # because the policy couldn't find a good gradient. Starting smaller
-        # gives the optimizer less room to escape into "permanent exploration"
-        # mode and biases it toward exploitation earlier.
-        init_noise_std=0.5,
+        # v1.4: lowered to 0.3 (was 0.5 in v1.3, 1.0 in v1.2). The two
+        # previous runs both blew std up — start with the smallest value
+        # that still allows initial exploration, so the optimizer has less
+        # ground to cover if it tries to expand.
+        init_noise_std=0.3,
         actor_hidden_dims=[256, 128, 64],
         critic_hidden_dims=[256, 128, 64],
         activation="elu",
@@ -35,11 +35,12 @@ class Eval2PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        # Default rsl_rl entropy bonus. The action_l2 penalty in the env
-        # rewards now does the "shrink std" job directly (by pulling the
-        # actor mean toward 0, which lets std collapse with it), so we keep
-        # entropy_coef at the standard value here.
-        entropy_coef=0.006,
+        # v1.4: lowered from 0.006 to 0.001. The entropy bonus is the term
+        # that *encourages* PPO to keep std large; with 0.006 it overpowered
+        # our action_l2 penalty and std climbed from 0.5 to 4.65 in 3 k iter.
+        # Cutting entropy_coef 6x removes that upward pressure so the
+        # action_l2 penalty (-1e-1, see env config) can do its job.
+        entropy_coef=0.001,
         num_learning_epochs=5,
         num_mini_batches=4,
         learning_rate=1.0e-4,
