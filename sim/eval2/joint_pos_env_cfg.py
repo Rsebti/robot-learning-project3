@@ -43,7 +43,11 @@ def _wire_so101_actions_and_ee_frame(self):
         asset_name="robot",
         joint_names=["gripper"],
         open_command_expr={"gripper": 0.5},
-        close_command_expr={"gripper": 0.0},
+        # close target = +0.05 : moving jaw stops at approximately 1.5 cm
+        # tip-to-tip separation from the fixed jaw — a clean visual that
+        # looks like the gripper has firmly grasped the 2 cm cube without
+        # crushing it.
+        close_command_expr={"gripper": 0.05},
     )
 
     marker_cfg = FRAME_MARKER_CFG.copy()
@@ -51,7 +55,7 @@ def _wire_so101_actions_and_ee_frame(self):
     marker_cfg.prim_path = "/Visuals/FrameTransformer"
     self.scene.ee_frame = FrameTransformerCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base_link",
-        debug_vis=True,
+        debug_vis=False,
         visualizer_cfg=marker_cfg,
         target_frames=[
             FrameTransformerCfg.FrameCfg(
@@ -125,7 +129,25 @@ def _make_colored_block_cfg(prim_name: str, init_pos: list[float], rgb: tuple[fl
                 disable_gravity=False,
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+            # Default collision offsets. Tried tightening contact_offset
+            # to 1mm to remove the "phantom" contact reporting (PhysX halo
+            # ~5mm makes contact appear before actual touch). But this
+            # broke the magic-attach: with no halo, the moving jaw never
+            # actually reaches the cube physically, so the moving-jaw
+            # force trigger doesn't fire and the cube isn't attached.
+            # Reverted to defaults — the visual gap in early logs is
+            # cosmetic; the magic-attach mechanism handles the snap once
+            # contact is detected.
             collision_props=sim_utils.CollisionPropertiesCfg(),
+            # Friction élevée (2.0/2.0). Avec GRASP_X_OFFSET=-0.010
+            # les jaws entrent en contact avec le cube. Mais le contact
+            # est instable, ce qui pousse le cube horizontalement.
+            # Friction 2.0 sur la table empêche ce drag latéral.
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                static_friction=2.0,
+                dynamic_friction=2.0,
+                restitution=0.0,
+            ),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=rgb, metallic=0.0),
         ),
     )

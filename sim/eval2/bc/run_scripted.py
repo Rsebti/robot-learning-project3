@@ -78,10 +78,27 @@ def main():
 
     env_cfg = parse_env_cfg(args.task, num_envs=args.num_envs)
     env_cfg.seed = args.seed
-    # Override episode_length to fit our scripted phase budget. Sum of
-    # PHASE_MAX_STEPS = 360 steps; at env_dt = 0.02 s -> 7.2 s. We give
-    # 10 s for safety margin.
-    env_cfg.episode_length_s = 10.0
+    # Trajectory typically reaches OPEN at t~5.7-6.7 s. The cube is detached
+    # at OPEN entry and falls into the bowl within ~0.1 s; success_now
+    # latches as soon as it lands. We end the episode ~1 s after OPEN so
+    # the cube has time to settle but we don't waste sim cycles in the
+    # idle DONE phase.
+    env_cfg.episode_length_s = 7.5
+    # Disable the "success" termination during scripted demos. With the
+    # magic-attach, the cube is rigidly tied to the gripper while ATTACHED;
+    # as the gripper passes over the bowl during ABOVE_BOWL, the cube
+    # is in the success zone (xy in bowl, z near floor) which fires the
+    # success termination — episode ends BEFORE we reach the actual
+    # OPEN/RELEASE phase. We need the trajectory to play out fully so
+    # the demo records a real release sequence. Drop the success term:
+    # we still tally success ourselves in the script (episode_success_seen)
+    # against the observed cube position after release.
+    env_cfg.terminations.success = None
+    print(
+        f"[scripted] disabled env-level success termination "
+        f"(scripted runs trajectory to completion)",
+        flush=True,
+    )
 
     print(f"[scripted] gym.make({args.task!r}, num_envs={args.num_envs})", flush=True)
     env = gym.make(args.task, cfg=env_cfg)
@@ -98,8 +115,8 @@ def main():
     )
     print(
         f"[scripted] ee body idx={controller.ee_body_idx}  "
-        f"L1={controller.L1:.3f} L2={controller.L2:.3f} L3={controller.L3:.3f} "
-        f"base_z={controller.base_offset_z:.3f}",
+        f"IK = pytorch_kinematics SO101IKSolver (position-only DLS, "
+        f"warm-start)",
         flush=True,
     )
 
@@ -126,59 +143,11 @@ def main():
     prev_phase_env0 = -1
 
     def _log_transition(step_idx, prev_phase, new_phase):
-        scn = env.unwrapped.scene
-        block_red = scn["block_red"].data.root_pos_w[0].cpu().tolist()
-        block_blue = scn["block_blue"].data.root_pos_w[0].cpu().tolist()
-        bowl = scn["bowl_floor"].data.root_pos_w[0].cpu().tolist()
-        actual_tip = scn["ee_frame"].data.target_pos_w[0, 0, :].cpu().tolist()
-        target_xyz = controller._compute_target_xyz_world()[0].cpu().tolist()
-        tgt_color = int(env.unwrapped.target_color[0].item())
-        tgt_block = block_blue if tgt_color == 1 else block_red
-        dist_to_target = (
-            (actual_tip[0] - target_xyz[0]) ** 2
-            + (actual_tip[1] - target_xyz[1]) ** 2
-            + (actual_tip[2] - target_xyz[2]) ** 2
-        ) ** 0.5
         prev_name = controller.PHASE_NAMES[prev_phase] if prev_phase >= 0 else "INIT"
         new_name = controller.PHASE_NAMES[new_phase]
-        print("=" * 72, flush=True)
+        t_s = step_idx * 0.02
         print(
-            f"[transition] step {step_idx:4d} env0  {prev_name}({prev_phase}) -> {new_name}({new_phase})",
-            flush=True,
-        )
-        print(
-            f"  target_color    = {'red' if tgt_color == 0 else 'blue'}",
-            flush=True,
-        )
-        print(
-            f"  target_xyz_world= ({target_xyz[0]:+.4f}, {target_xyz[1]:+.4f}, {target_xyz[2]:+.4f})",
-            flush=True,
-        )
-        print(
-            f"  actual tip      = ({actual_tip[0]:+.4f}, {actual_tip[1]:+.4f}, {actual_tip[2]:+.4f})",
-            flush=True,
-        )
-        print(
-            f"  dist to target  = {dist_to_target * 1000:.2f} mm",
-            flush=True,
-        )
-        print(
-            f"  target_block    = ({tgt_block[0]:+.4f}, {tgt_block[1]:+.4f}, {tgt_block[2]:+.4f})  ({'red' if tgt_color == 0 else 'blue'})",
-            flush=True,
-        )
-        print(
-            f"  bowl_floor      = ({bowl[0]:+.4f}, {bowl[1]:+.4f}, {bowl[2]:+.4f})",
-            flush=True,
-        )
-        print(
-            f"  joint pos URDF  = "
-            + ", ".join(
-                f"{n}={v:+.3f}"
-                for n, v in zip(
-                    env.unwrapped.scene["robot"].data.joint_names,
-                    env.unwrapped.scene["robot"].data.joint_pos[0].cpu().tolist(),
-                )
-            ),
+            f"[t={t_s:5.2f}s step{step_idx:4d}] *** PHASE {prev_name} -> {new_name} ***",
             flush=True,
         )
 
@@ -189,77 +158,34 @@ def main():
         if current_phase_env0 != prev_phase_env0:
             _log_transition(step_idx, prev_phase_env0, current_phase_env0)
             prev_phase_env0 = current_phase_env0
-        # ---- Debug snapshot for env 0 ----
-        if args.debug_env0 and step_idx % 5 == 0:
-            scn = env.unwrapped.scene
-            robot_a = scn["robot"]
-            ee_body_idx_dbg = controller.ee_body_idx
-            gripper_link_pos = robot_a.data.body_pose_w[0, ee_body_idx_dbg, :3].cpu().tolist()
-            tip_pos = scn["ee_frame"].data.target_pos_w[0, 0, :].cpu().tolist()
-            target_pos_w = controller._compute_target_xyz_world()[0].cpu().tolist()
-            block_red_p = scn["block_red"].data.root_pos_w[0].cpu().tolist()
-            block_blue_p = scn["block_blue"].data.root_pos_w[0].cpu().tolist()
-            bowl_p = scn["bowl_floor"].data.root_pos_w[0].cpu().tolist()
-            tgt_color = int(env.unwrapped.target_color[0].item())
-            phase_idx = int(controller.phase[0].item())
-            phase_name = controller.PHASE_NAMES[phase_idx]
-            phase_step = int(controller.phase_step[0].item())
-            print(
-                f"[debug] step {step_idx:4d} env0 phase={phase_name}({phase_idx}) "
-                f"step_in_phase={phase_step} target_color={'red' if tgt_color == 0 else 'blue'}",
-                flush=True,
-            )
-            print(
-                f"          target_xyz_world(gripper_link) = ({target_pos_w[0]:+.3f}, "
-                f"{target_pos_w[1]:+.3f}, {target_pos_w[2]:+.3f})",
-                flush=True,
-            )
-            print(
-                f"          actual gripper_link            = ({gripper_link_pos[0]:+.3f}, "
-                f"{gripper_link_pos[1]:+.3f}, {gripper_link_pos[2]:+.3f})",
-                flush=True,
-            )
-            print(
-                f"          actual tip (ee_frame)          = ({tip_pos[0]:+.3f}, "
-                f"{tip_pos[1]:+.3f}, {tip_pos[2]:+.3f})",
-                flush=True,
-            )
-            tgt_block_p = block_blue_p if tgt_color == 1 else block_red_p
-            tgt_block_z = tgt_block_p[2]
-            lifted_marker = " <-- LIFTED!" if tgt_block_z > 0.03 else ""
-            print(
-                f"          block_red                      = ({block_red_p[0]:+.3f}, "
-                f"{block_red_p[1]:+.3f}, {block_red_p[2]:+.3f})  "
-                f"block_blue=({block_blue_p[0]:+.3f},{block_blue_p[1]:+.3f},{block_blue_p[2]:+.3f}){lifted_marker}",
-                flush=True,
-            )
-            # Joint state — to detect joint-limit saturation during DESCEND.
-            j_pos = robot_a.data.joint_pos[0].cpu().tolist()
-            j_vel = robot_a.data.joint_vel[0].cpu().tolist()
-            j_names = robot_a.data.joint_names
-            print(
-                "          joint pos (rad): "
-                + ", ".join(f"{n}={p:+.3f}" for n, p in zip(j_names, j_pos)),
-                flush=True,
-            )
-            print(
-                "          joint vel (rad/s): "
-                + ", ".join(f"{n}={v:+.3f}" for n, v in zip(j_names, j_vel)),
-                flush=True,
-            )
-            print(
-                f"          bowl_floor                     = ({bowl_p[0]:+.3f}, "
-                f"{bowl_p[1]:+.3f}, {bowl_p[2]:+.3f})",
-                flush=True,
-            )
-
         action = controller.compute_action()  # (N, 6)
+        # ---- Compact debug for env 0 (contact + attach status with time) ----
         if args.debug_env0 and step_idx % 5 == 0:
+            t_s = step_idx * 0.02  # env_dt = 0.02 s
+            phase_name = controller.PHASE_NAMES[int(controller.phase[0].item())]
+            # Contact forces on each jaw with the target cube.
+            ff_data = controller.contact_gripper_link.data.force_matrix_w
+            fm_data = controller.contact_moving_jaw.data.force_matrix_w
+            tgt_color = int(env.unwrapped.target_color[0].item())
+            if ff_data is None or fm_data is None:
+                contact_str = "sensors=N/A"
+            else:
+                ff_norm = ff_data[0, 0, tgt_color, :].norm().item()
+                fm_norm = fm_data[0, 0, tgt_color, :].norm().item()
+                in_contact_fixed = ff_norm > controller.GRASP_FORCE_THRESHOLD_N
+                in_contact_moving = fm_norm > controller.GRASP_FORCE_THRESHOLD_N
+                fixed_str = f"{'YES' if in_contact_fixed else ' no'}({ff_norm:.2f}N)"
+                moving_str = f"{'YES' if in_contact_moving else ' no'}({fm_norm:.2f}N)"
+                contact_str = f"fixed={fixed_str} moving={moving_str}"
+            attached_str = "ATTACHED" if controller.cube_attached[0].item() else " --     "
+            # Gripper joint position to diagnose closing behavior.
+            gripper_pos = env.unwrapped.scene["robot"].data.joint_pos[
+                0, controller.gripper_joint_id
+            ].item()
+            grip_cmd = action[0, 5].item()
             print(
-                f"          action env0                    = "
-                f"arm({action[0, 0].item():+.2f},{action[0, 1].item():+.2f},"
-                f"{action[0, 2].item():+.2f},{action[0, 3].item():+.2f},"
-                f"{action[0, 4].item():+.2f}) grip={action[0, 5].item():+.2f}",
+                f"[t={t_s:5.2f}s step{step_idx:4d}] {phase_name:<19s} | {contact_str} | "
+                f"grip_joint={gripper_pos:+.3f}(cmd={grip_cmd:+.1f}) | {attached_str}",
                 flush=True,
             )
         step_idx += 1
@@ -288,7 +214,15 @@ def main():
             for env_idx in done_envs.tolist():
                 phase_at_end = controller.phase[env_idx].item()
                 end_phase_hist[phase_at_end] += 1
-                if bool(episode_success_seen[env_idx]):
+                ok = bool(episode_success_seen[env_idx])
+                phase_name = controller.PHASE_NAMES[phase_at_end]
+                tag = "SUCCESS" if ok else "FAIL   "
+                print(
+                    f"[scripted] ep{n_episodes_done + 1:>4d} env{env_idx:<3d} {tag} "
+                    f"(ended in {phase_name})",
+                    flush=True,
+                )
+                if ok:
                     n_successes += 1
                     success_phase_hist[phase_at_end] += 1
                 episode_success_seen[env_idx] = False

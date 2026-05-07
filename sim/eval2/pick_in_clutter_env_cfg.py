@@ -27,7 +27,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import CameraCfg
+from isaaclab.sensors import CameraCfg, ContactSensorCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg
 from isaaclab.utils import configclass
@@ -156,6 +156,36 @@ class PickInClutterSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.DomeLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
     )
 
+    # Contact sensors on the gripper. Each sensor reports the contact forces
+    # between its sensor body (one of the gripper links) and the filtered
+    # bodies (red + blue cubes). Used by the scripted controller to verify
+    # the grasp at end of CLOSE — if both jaws don't have ≥ threshold force
+    # on the target cube, the controller retries CLOSE instead of advancing
+    # to LIFT (which would fail anyway).
+    #
+    # gripper_link contains the FIXED jaw geometry (per SO-101 URDF).
+    # moving_jaw_so101_v1_link is the moving jaw side.
+    contact_gripper_link = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/gripper_link",
+        update_period=0.0,  # update every sim step
+        history_length=1,
+        debug_vis=False,
+        filter_prim_paths_expr=[
+            "{ENV_REGEX_NS}/BlockRed",
+            "{ENV_REGEX_NS}/BlockBlue",
+        ],
+    )
+    contact_moving_jaw = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/moving_jaw_so101_v1_link",
+        update_period=0.0,
+        history_length=1,
+        debug_vis=False,
+        filter_prim_paths_expr=[
+            "{ENV_REGEX_NS}/BlockRed",
+            "{ENV_REGEX_NS}/BlockBlue",
+        ],
+    )
+
 
 # ---------------------------------------------------------------------------
 # Managers
@@ -276,15 +306,21 @@ class RewardsCfg:
     )
 
     # Main signal: ONE-SHOT bonus at each stage transition. No cumulative
-    # advantage to dwelling on a low stage. The 500 bonus on stage 5
-    # transition dominates the 5+20+50+100=175 of all earlier transitions,
-    # and the 100 above_bowl bonus dominates the 75 of stages 1-3 — so
-    # the value gradient pushes monotonically toward success.
+    # advantage to dwelling on a low stage.
+    #
+    # v1.8 (Plan A.2 from eval2.md): success bonus 500 -> 2000. With v1.4
+    # we saw the policy "game" the early stages and never commit to the
+    # final placement, even with a 200x success_bonus. The stage system
+    # (v1.7) already prevents gaming intermediate stages without
+    # progression, but the value of stage 5 still has to dominate the
+    # cumulative attractive effect of dense reaching/stage rewards over
+    # the full episode horizon. 2000 makes "1 successful demo" worth more
+    # than ~13 episodes of dense reaching at full saturation.
     stage_progress = RewTerm(
         func=mdp.stage_progress_reward,
         params={
             # transition into stage: (s0, s1, s2, s3, s4, s5)
-            "transition_bonuses": (0.0, 5.0, 20.0, 50.0, 100.0, 500.0),
+            "transition_bonuses": (0.0, 5.0, 20.0, 50.0, 100.0, 2000.0),
         },
         weight=1.0,
     )
