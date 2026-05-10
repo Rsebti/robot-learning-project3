@@ -876,3 +876,67 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+
+# v17 — V2.12: V2.9 reward + V2.9 PPO + DELTA action control.
+# `RelativeJointPositionActionCfg(scale=0.20, use_zero_offset=True)` gives
+# a hard mechanical vmax cap = 6 rad/s (Feetech-aligned). With velocity
+# bounded structurally, all the reward shaping that V2.10/V2.11 added to
+# fight the velocity issue is reverted. V2.9 reward + PPO config restored
+# verbatim. Single addition kept from V2.10c: `ee_to_cube_distance` linear
+# distance penalty for global value-function gradient.
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V212-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV212"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_12:LiftCubePPORunnerCfgV212"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V212-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV212_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_12:LiftCubePPORunnerCfgV212"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V212-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV212"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_12:LiftCubePPORunnerCfgV212"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V212-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV212_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_12:LiftCubePPORunnerCfgV212"
+        ),
+    },
+    disable_env_checker=True,
+)

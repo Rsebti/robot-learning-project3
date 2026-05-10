@@ -135,3 +135,50 @@ def cube_dropped(
     """
     cube: RigidObject = env.scene[cube_cfg.name]
     return cube.data.root_pos_w[:, 2] < world_z_threshold
+
+
+def ee_far_from_cube(
+    env: ManagerBasedRLEnv,
+    distance_threshold: float = 0.5,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+) -> torch.Tensor:
+    """Fail-fast termination: the EE has wandered too far from the cube.
+
+    Cuts off "wandering" episodes where the policy has lost the task —
+    the gripper has drifted so far from the cube that there is no
+    productive trajectory left in the remaining episode budget.
+
+    Why this saves training time (V2.12 addition): typical EE-cube
+    distance at reset is ~24 cm. The SO-101 reach radius is ~30-40 cm.
+    If the EE drifts to >50 cm, the bras has gone in the wrong direction
+    long enough that recovery is unlikely. Without this termination,
+    those "lost" episodes still consume 100+ sim steps doing nothing
+    useful. Cutting them early lets the simulator reset and reroll a
+    productive trajectory faster, accelerating early-iter learning.
+
+    Why no associated reward penalty (note `cube_dropped_penalty` is a
+    separate term): the value function bootstrap at truncation already
+    gives PPO the signal "this region is bad" (V(out_of_bounds) is low
+    because nothing valuable can happen from there). Adding a negative
+    RewTerm risks creating "fear of edges" — policy avoids the cube
+    boundary even when approaching legitimately. Termination alone is
+    enough.
+
+    Args:
+        distance_threshold: ||EE - cube|| in world frame above which the
+            episode terminates. Default 0.5 m — generous (2× typical
+            reset distance) so the policy has room to maneuver, tight
+            enough to fail fast on lost trajectories.
+        cube_cfg: scene entity config for the cube.
+        ee_frame_cfg: scene entity config for the EE FrameTransformer
+            (uses target index 0, same as `lift_mdp.object_ee_distance`).
+
+    Returns:
+        ``(num_envs,)`` bool tensor. True = EE too far, episode ends.
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+    ee_pos_w = ee_frame.data.target_pos_w[..., 0, :]
+    distance = torch.norm(cube.data.root_pos_w - ee_pos_w, dim=-1)
+    return distance > distance_threshold

@@ -70,3 +70,72 @@ def bowl_xyz_zero(env: ManagerBasedRLEnv) -> torch.Tensor:
     with the bowl's actual xyz coordinates from the bowl asset.
     """
     return torch.zeros(env.num_envs, 3, device=env.device, dtype=torch.float32)
+
+
+# ---------------------------------------------------------------------------
+# V2.12 — explicit relative vectors (EE→cube, cube→goal).
+#
+# Why expose these to the policy: the canonical Isaac Lab Lift obs gives
+# `object_position` (cube in robot root) + `target_object_position`
+# (goal in robot root) separately. The MLP must subtract them mentally
+# (cube - ee, goal - cube) to derive the directions to move. Small MLPs
+# (256-128-128) take many iters just to learn this trivial subtraction —
+# wasted training capacity.
+#
+# Pre-computing the difference vectors and feeding them as obs gives the
+# policy direct access to the geometric relationships, accelerating
+# convergence. This is what the HW4 ETH Zürich SO-100 reference includes
+# in its observation, and why ManiSkill / robosuite manipulation tasks
+# expose `tcp_to_obj` and `obj_to_goal` directly.
+# ---------------------------------------------------------------------------
+
+
+def ee_to_cube_vector(
+    env: ManagerBasedRLEnv,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+) -> torch.Tensor:
+    """Vector from the EE target frame to the cube, in world frame (3D).
+
+    Same EE target index (0) as ``lift_mdp.object_ee_distance`` so both
+    terms agree on which point on the gripper is "the EE". Robot is
+    static in our scene (not navigating), so the world-frame difference
+    is equivalent to a robot-root-frame difference modulo a fixed
+    rotation that the MLP first layer can absorb trivially.
+
+    Returns:
+        ``(num_envs, 3)`` tensor: ``cube_pos_w - ee_pos_w``.
+    """
+    cube = env.scene[object_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+    cube_pos_w = cube.data.root_pos_w
+    ee_pos_w = ee_frame.data.target_pos_w[..., 0, :]
+    return cube_pos_w - ee_pos_w
+
+
+def cube_to_goal_vector(
+    env: ManagerBasedRLEnv,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    command_name: str = "object_pose",
+) -> torch.Tensor:
+    """Vector from the cube to the commanded goal pose, in world frame (3D).
+
+    The goal pose is published by ``UniformPoseCommandCfg`` in the robot
+    root frame; we project it into world frame (matching what the
+    `cube_to_goal_distance_above_base` reward does) and then take the
+    difference with the cube's world position.
+
+    Returns:
+        ``(num_envs, 3)`` tensor: ``goal_pos_w - cube_pos_w``.
+    """
+    from isaaclab.utils.math import combine_frame_transforms
+
+    cube = env.scene[object_cfg.name]
+    robot = env.scene[robot_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    goal_pos_b = command[:, :3]
+    goal_pos_w, _ = combine_frame_transforms(
+        robot.data.root_pos_w, robot.data.root_quat_w, goal_pos_b
+    )
+    return goal_pos_w - cube.data.root_pos_w

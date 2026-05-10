@@ -1582,3 +1582,320 @@ class LeIsaacLiftCubeRLVisualEnvCfgV211_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV211):
         self.scene.num_envs = 50
         self.scene.env_spacing = 2.5
         self.observations.policy.enable_corruption = False
+
+
+# ---------------------------------------------------------------------------
+# V2.12 — V2.9 reward/PPO + DELTA action control (vmax mechanical cap).
+#
+# Strategy: V2.9 converged on the task (60% success deterministic on 3cm
+# cube, 30% on 2cm). The only real failure was action quality (joints
+# saturated at 10 rad/s, yeet/scoop motor program). V2.10 → V2.11 spent
+# 2 weeks trying to fix the velocity issue via reward shaping, all
+# failed (paralysis, plateau, or yeet returned).
+#
+# Root cause finally identified: ``JointPositionActionCfg`` with
+# ``use_default_offset=True`` is **absolute** control (target = scale *
+# action + default_pos), so ``scale`` bounds the *joint range*, not the
+# velocity. There's no structural velocity cap.
+#
+# V2.12 fix: switch to ``RelativeJointPositionActionCfg`` (delta control,
+# target = current_pos + scale * action). Now ``scale`` is a true
+# per-step delta cap. With scale=0.20 and dt_ctrl=1/30s, vmax = 6 rad/s
+# = Feetech STS3215 limit. The action space *cannot* command faster
+# than the real servo can move — sim-to-real aligned by construction.
+#
+# With the velocity issue resolved structurally, we revert all the
+# reward/PPO patches that were masking the problem:
+#   - Smoothness rewards back to Isaac Lab default (-1e-4 each)
+#   - Drop joint_acc_l2 entirely (Isaac Lab Lift doesn't use it)
+#   - Restore V2.9 PPO config (init_noise=1.0, entropy=0.005)
+#   - Keep V2.9 reward shaping (grasp+lift gating, lifting=10, etc.)
+#
+# Single env-side innovation we keep from V2.10c:
+# `ee_to_cube_distance` (linear -d, weight=-1.0) — provides global value
+# function gradient toward cube, accelerates exploration. V2.9 didn't
+# need it because it had `init_noise=1.0` for broad exploration; we keep
+# it as a bootstrap aid.
+#
+# References:
+#   - https://isaac-sim.github.io/IsaacLab/main/source/api/lab/isaaclab.envs.mdp.html
+#     (RelativeJointPositionAction docs)
+#   - DextrAH-RGB (arXiv:2412.01791) — delta control with jerk limits
+#   - ManiSkill3 PickCube — uses delta control
+# ---------------------------------------------------------------------------
+
+
+@configclass
+class RewardsCfgV212(RewardsCfgV285):
+    """V2.12 reward — V2.8.5 base + ee_to_cube_distance + 2 exploit fixes.
+
+    Inherits V2.8.5 directly (V2.9 doesn't define a separate
+    `RewardsCfgV29` — V2.9 added `cube_dropped_penalty` via the env's
+    `__post_init__`). We declare `cube_dropped_penalty` here at class
+    level with weight -50 (V2.12 fix), but the V2.9 env's
+    `__post_init__` would otherwise overwrite it back to -5. To prevent
+    that, `LeIsaacLiftCubeRLEnvCfgV212.__post_init__` re-asserts the
+    -50 weight after `super().__post_init__()` runs.
+
+    V2.8.5 brings: V2.7 grasp+lift gating (cube_lifted_and_grasped),
+    audit fixes (lift_height_threshold=0.08, reaching std=0.15,
+    success_bonus=1500), and noise-floor smoothness (-1e-4 each).
+
+    Three modifications vs V2.9:
+      1. NEW `ee_to_cube_distance` linear term (V2.10c innovation kept).
+         Constant -1/m gradient via value function for early exploration.
+      2. `success_bonus` weight 1500 → 2500 (math fix). At hover-near-
+         goal (d=5.1cm), discounted future dense reward ≈ 1900. With
+         success_bonus=1500, finishing nets 1500 < hover-100-steps net
+         1900 → PPO prefers hover. Bumping to 2500 ensures
+         success ≥ hover + safety margin.
+      3. `cube_dropped_penalty` weight -5 → -15 (Touch-and-Yeet fix).
+         A brief grasp+lift+drop trajectory under V2.9 weights gave net
+         +30 (reach 5 + grasp 10 + lift 20 - drop 5). Bumping drop
+         penalty to -15 makes such yeet trajectories net-negative.
+    """
+
+    ee_to_cube_distance = RewTerm(
+        func=eval2_mdp.object_ee_distance_l2,
+        params={
+            "object_cfg": SceneEntityCfg("cube"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+        },
+        weight=-1.0,
+    )
+
+    # V2.12 fix #1 — math-driven: hover at d=5.1cm gives discounted
+    # ~+1900 over remaining 100 steps (γ=0.99). Bump bonus above 1900.
+    success_bonus = RewTerm(
+        func=eval2_mdp.cube_at_goal,
+        params={
+            "distance_threshold": 0.05,
+            "command_name": "object_pose",
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+        },
+        weight=2500.0,
+    )
+
+    # V2.12 fix #2 — Touch-and-Yeet exploit, REVISED to -50.
+    #
+    # Correct math: a typical yeet trajectory accumulates
+    #   reach   30 steps × 0.16 = +5
+    #   grasp    3 steps × 5    = +15  (briefly fires during contact)
+    #   lift     2 steps × 10   = +20  (gated by grasp ∧ lift)
+    #   total positive          = +40 in just a few steps
+    #
+    # At drop_penalty = -15, net yeet = +25 (still attractive — exploitable).
+    # At -30, net = +10 (still slightly positive).
+    # At -50, net = -10 (clearly net-negative — yeet suppressed).
+    #
+    # Risk of "fear of grasping" (policy avoids grasp attempts because of
+    # accidental drops): with DELTA action control limiting impact
+    # speeds, accidental drops should be rare (~2-5 %), so expected
+    # penalty per episode is ~-2.5 vs +500-1500 expected from a sustained
+    # grasp — not crippling. The -50 weight makes drop strictly
+    # net-negative across all realistic yeet trajectories.
+    #
+    # Watch `Episode_Termination/cube_dropped` rate during V2.12 training:
+    # if it stabilizes >30% sustained, the policy is dropping too often
+    # and -50 may be excessive — would dial back to -30 in V2.13.
+    cube_dropped_penalty = RewTerm(
+        func=eval2_mdp.cube_dropped_float,
+        params={
+            "world_z_threshold": 0.04,
+            "cube_cfg": SceneEntityCfg("cube"),
+        },
+        weight=-50.0,
+    )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV212(LeIsaacLiftCubeRLEnvCfgV210):
+    """V2.12 state-only env — V2.9 reward + DELTA action control.
+
+    Inherits V2.10 for the env infrastructure (USD edits cube 2cm + table
+    #B8ADA9, LeIsaac stock pose_range ±7.5cm + yaw ±30°, Phase C
+    placeholders, cube init z compensation). Overrides:
+
+      1. `rewards`: V2.12 (V2.9 + ee_to_cube_distance) instead of V2.10's
+         heavy smoothness + V210 placeholder structure.
+      2. `actions.arm_action`: replace V2.10's ``JointPositionActionCfg
+         (scale=0.25, use_default_offset=True)`` with
+         ``RelativeJointPositionActionCfg(scale=0.20, use_zero_offset=True)``.
+         vmax_mechanical = 0.20 / (1/30) = 6.0 rad/s = Feetech limit.
+
+    Why scale=0.20 here works (vs failed in V2.11 v1):
+      - V2.11 v1 used scale=0.20 in ABSOLUTE mode → joint range capped to
+        ±0.20 rad (±11.5°), too restrictive, robot couldn't reach.
+      - V2.12 uses scale=0.20 in DELTA mode → per-step delta capped to
+        0.20 rad/step, but no range restriction (joint can accumulate
+        deltas to reach any position over multiple steps). vmax bounded.
+    """
+
+    rewards: RewardsCfgV212 = RewardsCfgV212()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # Replace the inherited JointPositionActionCfg (absolute) with the
+        # RelativeJointPositionActionCfg (delta). Same joint set, scale
+        # tuned for vmax = 6 rad/s mechanical at 30 Hz control.
+        self.actions.arm_action = base_mdp.RelativeJointPositionActionCfg(
+            asset_name="robot",
+            joint_names=["shoulder_pan", "shoulder_lift", "elbow_flex",
+                         "wrist_flex", "wrist_roll"],
+            scale=0.20,
+            use_zero_offset=True,
+        )
+
+        # V2.12 — explicit relative vectors. The MLP would otherwise have
+        # to learn (cube_pos - ee_pos) and (goal_pos - cube_pos) implicitly
+        # from the absolute positions. Pre-computing these as obs terms
+        # accelerates convergence on small networks (ETH HW4 SO-100 ref,
+        # ManiSkill `tcp_to_obj` and `obj_to_goal`).
+        self.observations.policy.ee_to_cube_vec = ObsTerm(
+            func=eval2_mdp.ee_to_cube_vector,
+            params={
+                "object_cfg": SceneEntityCfg("cube"),
+                "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            },
+        )
+        self.observations.policy.cube_to_goal_vec = ObsTerm(
+            func=eval2_mdp.cube_to_goal_vector,
+            params={
+                "object_cfg": SceneEntityCfg("cube"),
+                "robot_cfg": SceneEntityCfg("robot"),
+                "command_name": "object_pose",
+            },
+        )
+
+        # V2.12 fix #3 — Wandering Cutoff (fail-fast termination).
+        # Episode terminates if EE drifts to >50 cm from cube. Saves
+        # the ~100 wasted sim steps on lost episodes during early iters
+        # where the bras explores randomly and ends up far from the cube.
+        self.terminations.ee_far_from_cube = DoneTerm(
+            func=eval2_mdp.ee_far_from_cube,
+            params={
+                "distance_threshold": 0.5,
+                "cube_cfg": SceneEntityCfg("cube"),
+                "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            },
+        )
+
+        # V2.12 fix #2 (re-asserted) — V2.9 env's __post_init__ chain
+        # assigns `self.rewards.cube_dropped_penalty = RewTerm(weight=-5)`
+        # which OVERWRITES our class-level RewardsCfgV212.cube_dropped_penalty
+        # = -50 declaration. We re-create the term here after super() to
+        # restore the -50 weight. Same with success_bonus (V285 declares
+        # 1500 at class level; our V212 class-level override should win
+        # via @configclass MRO, but we re-assert defensively).
+        self.rewards.cube_dropped_penalty = RewTerm(
+            func=eval2_mdp.cube_dropped_float,
+            params={
+                "world_z_threshold": 0.04,
+                "cube_cfg": SceneEntityCfg("cube"),
+            },
+            weight=-50.0,
+        )
+        self.rewards.success_bonus = RewTerm(
+            func=eval2_mdp.cube_at_goal,
+            params={
+                "distance_threshold": 0.05,
+                "command_name": "object_pose",
+                "cube_cfg": SceneEntityCfg("cube"),
+                "robot_cfg": SceneEntityCfg("robot"),
+            },
+            weight=2500.0,
+        )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV212_PLAY(LeIsaacLiftCubeRLEnvCfgV212):
+    """Smaller scene + no obs corruption for replaying a V2.12 checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV212(LeIsaacLiftCubeRLVisualEnvCfgV210):
+    """V2.12 visual env — V2.9 reward + DELTA action control.
+
+    Same structure as `LeIsaacLiftCubeRLEnvCfgV212` (state-only) but
+    with the wrist camera + ResNet-18 features re-enabled (inherits
+    V210 visual). Action class swapped to delta mode the same way.
+    """
+
+    rewards: RewardsCfgV212 = RewardsCfgV212()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # See LeIsaacLiftCubeRLEnvCfgV212.__post_init__ for full rationale.
+        self.actions.arm_action = base_mdp.RelativeJointPositionActionCfg(
+            asset_name="robot",
+            joint_names=["shoulder_pan", "shoulder_lift", "elbow_flex",
+                         "wrist_flex", "wrist_roll"],
+            scale=0.20,
+            use_zero_offset=True,
+        )
+
+        # V2.12 explicit relative vectors (see state-only env for rationale).
+        self.observations.policy.ee_to_cube_vec = ObsTerm(
+            func=eval2_mdp.ee_to_cube_vector,
+            params={
+                "object_cfg": SceneEntityCfg("cube"),
+                "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            },
+        )
+        self.observations.policy.cube_to_goal_vec = ObsTerm(
+            func=eval2_mdp.cube_to_goal_vector,
+            params={
+                "object_cfg": SceneEntityCfg("cube"),
+                "robot_cfg": SceneEntityCfg("robot"),
+                "command_name": "object_pose",
+            },
+        )
+
+        # V2.12 fix #3 — Wandering Cutoff (see state-only env for rationale).
+        self.terminations.ee_far_from_cube = DoneTerm(
+            func=eval2_mdp.ee_far_from_cube,
+            params={
+                "distance_threshold": 0.5,
+                "cube_cfg": SceneEntityCfg("cube"),
+                "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            },
+        )
+
+        # V2.12 fix #2 / fix #1 re-asserted (defeats V29 __post_init__ override).
+        # See LeIsaacLiftCubeRLEnvCfgV212.__post_init__ for rationale.
+        self.rewards.cube_dropped_penalty = RewTerm(
+            func=eval2_mdp.cube_dropped_float,
+            params={
+                "world_z_threshold": 0.04,
+                "cube_cfg": SceneEntityCfg("cube"),
+            },
+            weight=-50.0,
+        )
+        self.rewards.success_bonus = RewTerm(
+            func=eval2_mdp.cube_at_goal,
+            params={
+                "distance_threshold": 0.05,
+                "command_name": "object_pose",
+                "cube_cfg": SceneEntityCfg("cube"),
+                "robot_cfg": SceneEntityCfg("robot"),
+            },
+            weight=2500.0,
+        )
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV212_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV212):
+    """Smaller scene + no obs corruption for replaying a V2.12 visual ckpt."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False

@@ -17,12 +17,330 @@
 
 ```
 Phase A (~10h)        smoke test state-only lift              [VALIDÉ ✓]
-Phase B (~22h/run)    wrist cam + ResNet, 9 variantes PPO     [EN COURS — V2.10]
+Phase B (~22h/run)    wrist cam + ResNet, 14 variantes PPO    [EN COURS — V2.11 v3]
 Phase C (~1 semaine)  Eval 2 par curriculum (5-6 paliers, 6 couleurs)
 Phase D (~1-2 jours)  deploy SO-101 réel + 5 rollouts TA
 ```
 
 Estimation totale : ~10-15 jours de travail réel + ~5-10h GPU (~$30-80 Brev si on bascule).
+
+---
+
+## 🔄 ÉTAT POUR REPRISE (2026-05-10, V2.12) — LIS CETTE SECTION EN PREMIER
+
+> Cette section est le handoff complet de l'état actuel après ~3 jours de
+> debugging itératif sur Phase B. Si tu reprends ce projet (humain ou LLM),
+> lis tout cette section avant le reste du doc. Le reste est l'historique
+> détaillé.
+
+### Où on en est
+
+- **Variant actif** : **V2.12** (cold-start, à lancer par user). Logs cibles : `logs/rsl_rl/lift_v2_12/<nouveau-timestamp>/`. V2.12 = V2.9 reward+PPO + **DELTA action control** (le vrai fix qu'on cherchait). Tous les runs V2.10 → V2.11 v1/v2/v3 restent en archive.
+- **Tâche** : LeIsaac SO-101 lift cube, **état + wrist cam ResNet18 features + relative vectors (obs_dim=555)**, **`RelativeJointPositionActionCfg(scale=0.20)`** = vmax mécanique 6 rad/s, V2.9 reward shaping (grasp+lift gating), V2.9 PPO config (init_noise=1.0, entropy=0.005), + linear distance penalty -1.0.
+- **Phase A validée** depuis 2026-05-08 (state-only PPO sur LeIsaac, Phase B = ajout wrist cam).
+- **Phase C/D pas démarrées**. Phase C nécessite Phase B fonctionnel (≥30% success deterministic).
+
+### Les 5 insights critiques apprises à la dure (ne pas oublier)
+
+#### 1. `JointPositionActionCfg` (absolu) ≠ `RelativeJointPositionActionCfg` (delta)
+
+Isaac Lab a **deux** action classes pour position-control de joints :
+
+```python
+# ABSOLU — ce qu'on utilisait V2 → V2.11
+JointPositionActionCfg(scale, use_default_offset=True)
+# target = scale × action + default_pos
+# → scale borne le RANGE articulaire (±scale rad de home)
+# → AUCUN cap de vitesse
+
+# DELTA — ce qu'on utilise depuis V2.12
+RelativeJointPositionActionCfg(scale, use_zero_offset=True)
+# target = current_pos + scale × action
+# → scale borne la VITESSE par step
+# → vmax = scale / dt_ctrl
+```
+
+Avec scale=0.20 en DELTA et dt_ctrl=1/30s → vmax = **6.0 rad/s** = limite Feetech STS3215. Cap mécanique dur sur la vélocité, sim-to-real aligné par construction.
+
+Erreur faite en V2.11 v1 : on a essayé scale=0.20 en mode ABSOLU, ce qui a borné le range articulaire à ±11.5° → robot bloqué. La V2.11 v2/v3 ont remis scale=0.5 (range correct) mais ont alors essayé de cap la vitesse via reward shaping → échec (cf insight #2).
+
+V2.12 corrige : mode DELTA + scale=0.20 → range articulaire libre (joint accumule des deltas) + vmax mécanique 6 rad/s.
+
+#### 2. Smoothness via action space ⊕ reward — DELTA control rend le reward inutile
+
+La research Isaac Lab Lift / DextrAH dit "smoothness via action space, pas via reward". On l'avait mis en doute parce qu'avec `JointPositionActionCfg` standard (absolu), il n'y avait aucune contrainte d'action space, et le default Isaac Lab `-1e-4` était insuffisant (V2.9 yeet, V2.11 v2 yeet).
+
+**Insight V2.12** : la research était correcte, on n'avait juste pas la bonne action class. Avec `RelativeJointPositionActionCfg(scale=0.20)`, l'action space cap la vitesse → on revient au défaut Isaac Lab pour smoothness reward (`-1e-4`).
+
+Si tu vois quelqu'un dire "smoothness via reward" sur ce projet, c'est qu'on est revenu en mode absolu — sinon les `-1e-4` defaults Isaac Lab Lift suffisent.
+
+#### 3. `joint_acc_l2` est piège — toujours le drop
+
+`q_acc` est le dérivé discret de `q_dot` avec `dt = 1/30s`, donc `|q_acc|² ≈ 700 × |q_dot|²` à toute dynamique. Le poids doit être 700× plus petit que `joint_vel` weight pour parité, sinon il domine et paralyse (V2.10 cold-start, V2.10 warm-start). Plus simple : **drop entirely** (Isaac Lab Lift le fait, V2.11 v3 aussi).
+
+#### 4. `ee_to_cube_distance` linéaire est notre seule innovation utile (V2.10c)
+
+```python
+ee_to_cube_distance = RewTerm(
+    func=eval2_mdp.object_ee_distance_l2,    # raw ||EE - cube|| in meters
+    weight=-1.0,
+)
+```
+
+Pourquoi ça marche : tanh(d/0.15) sature à d > 60cm, donnant 0 gradient à grande distance. Le linéaire `-d` donne un gradient constant `-1/m` partout, créant une drive globale via la value function (γ=0.99 GAE bootstraps `V(s_close) > V(s_far)` même sans bouger). S'auto-éteint en phase grasp/lift (||EE-cube|| → 0 quand la pince tient le cube).
+
+#### 5. Termination `cube_dropped` thresholds dépendent de la scène
+
+Notre scène LeIsaac a la table à `world_z ≈ 0.0415` (table élevée). Donc `world_z_threshold = 0.04` = "cube juste sous la table top" = "cube tombé". L'équivalent Isaac Lab Lift d'un threshold `-0.05` (où la table est à z=0) est notre `0.04`. Ne pas confondre les deux scènes.
+
+### Stack V2.12 (config actuelle)
+
+**Reward shaping** ([sim/eval2/leisaac_lift_env_cfg.py](../sim/eval2/leisaac_lift_env_cfg.py) `RewardsCfgV212`) — V2.9 + 3 modifications :
+
+| terme | weight | gating | source |
+|---|---|---|---|
+| `reaching_object` (tanh, std=0.15) | +1.0 | none | Isaac Lab canonical |
+| `grasping_cube` (binary, jaw<4cm + grip<0.26) | +5.0 | none | LeIsaac obs |
+| `lifting_object` | **+10.0** | **`grasp ∧ lift`** (z_rel > 0.08, V2.7 fix) | V2.7 anti-flick |
+| `object_goal_tracking` (std=0.3) | +16.0 | **`grasp ∧ lift`** | V2.7 anti-flick |
+| `object_goal_tracking_fine_grained` (std=0.05) | +5.0 | **`grasp ∧ lift`** | V2.7 anti-flick |
+| `success_bonus` (sparse, on cube_reached_goal) | **+2500** ⭐ | terminal | V2.12 fix #1 (1500 < hover 1900) |
+| `ee_to_cube_distance` (linéaire raw d, V2.10c innovation) | -1.0 | none | bootstrap exploration |
+| `action_rate_l2` | -1e-4 | n/a | Isaac Lab default (action space caps vitesse) |
+| `joint_vel_l2` | -1e-4 | n/a | Isaac Lab default |
+| `joint_acc_l2` | 0 (drop) | n/a | absent du Lift task |
+| `cube_dropped_penalty` (binary, world_z<0.04) | **-50.0** ⭐ | n/a | V2.12 fix #2 (Touch-and-Yeet, math: yeet ≈ +40 brief, drop -50 → net -10) |
+
+**Action — DELTA control** (NOUVEAU V2.12) :
+- Class : `RelativeJointPositionActionCfg` (au lieu de `JointPositionActionCfg`)
+- `scale = 0.20`, `use_zero_offset = True`
+- vmax mécanique = 0.20 / (1/30s) = **6.0 rad/s** (limite Feetech STS3215)
+- Joints : `[shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll]` (gripper séparé via `BinaryJointPositionActionCfg`)
+
+**Observations — relative vectors** (NOUVEAU V2.12) :
+
+Obs cumulé (Visual variant) :
+```
+joint_pos                      ( 6D)
+joint_vel                      ( 6D)
+object_position                ( 3D, cube en robot root frame)
+target_object_position         ( 7D, goal pose en robot root frame)
+last_action                    ( 6D)
+wrist_features                 (512D, ResNet)
+target_color_zero              ( 6D, Phase C placeholder)
+bowl_xyz_zero                  ( 3D, Phase C placeholder)
+ee_to_cube_vec                 ( 3D, NEW V2.12, world frame)
+cube_to_goal_vec               ( 3D, NEW V2.12, world frame)
+─────────────────────────
+total = 555D                   (V2.10/V2.11 = 549D)
+```
+
+Pourquoi : MLP `[256,128,128]` doit normalement apprendre la soustraction `cube - ee` et `goal - cube` à partir des positions absolues. Pour un petit MLP, c'est ~100 iters perdues juste sur ce calcul implicite. Pré-calculer les vecteurs relatifs accélère la convergence (pattern HW4 ETH SO-100, ManiSkill `tcp_to_obj` / `obj_to_goal`).
+
+**Termination / Misc** :
+- DoneTerms : `time_out` (5s = 150 steps), `cube_reached_goal` (3D dist <5cm), `cube_dropped` (world_z<0.04m), **`ee_far_from_cube` (V2.12 fix #3, ||EE - cube|| > 0.5m, fail-fast)** ⭐
+- Cube spawn pose_range : `x±7.5cm, y±7.5cm, yaw±30°` (LeIsaac stock)
+- Cube taille : 2cm (USD `xformOp:scale=2/3` de l'asset 3cm LeIsaac)
+- Table couleur : #B8ADA9 (USD PreviewSurface override sur prim `counter_right_main_group`)
+- Phase C placeholders : `target_color_zero` 6D + `bowl_xyz_zero` 3D = obs +9D pour warm-start futur Phase C
+
+**PPO config** ([sim/eval2/agents/rsl_rl_ppo_cfg_v2_12.py](../sim/eval2/agents/rsl_rl_ppo_cfg_v2_12.py) `LiftCubePPORunnerCfgV212`) — clone V2.9 :
+- `init_noise_std = 1.0` (V2.9 default, exploration large car action space cap maintenant la vitesse)
+- `entropy_coef = 0.005` (V2.9 default)
+- `value_loss_coef = 1.0`, `n_epochs = 5`, `n_mini_batches = 4`
+- `LR = 1e-3`, `schedule = adaptive`, **`desired_kl = 0.02`** ⭐ (V2.12 fix #4, was 0.01 — relax pour tolérer le bruit KL des minibatches Phase B)
+- `gamma = 0.99`, `lam = 0.95`, `max_grad_norm = 1.0`
+- `actor_hidden_dims = [256, 128, 128]`
+- `experiment_name = "lift_v2_12"`
+
+### Commandes cheat-sheet (PowerShell)
+
+**Train V2.12 (cold-start) :**
+```powershell
+cd C:\Users\user\Desktop\MA2\isaac\isaac_so_arm101
+.\.venv\Scripts\Activate.ps1
+python -m sim.eval2.scripts.train `
+  --task Isaac-LeIsaac-SO101-Lift-Visual-V212-v0 `
+  --headless --enable_cameras
+```
+
+**Monitor TB metrics (autre terminal) :**
+```powershell
+python -m sim.eval2.scripts.monitor_training --experiment lift_v2_12
+```
+
+**Play visuel (regarder la policy d'un checkpoint) :**
+```powershell
+python -m sim.eval2.scripts.play `
+  --task Isaac-LeIsaac-SO101-Lift-Visual-V212-Play-v0 `
+  --num_envs 4 `
+  --enable_cameras `
+  --checkpoint "logs\rsl_rl\lift_v2_12\<timestamp>\model_<N>.pt"
+```
+
+**Diagnostic complet d'un checkpoint** (action histogram, grasp lifecycle, reward decomposition, → écrit `play_logs/<task>_<datetime>.summary.txt`) :
+```powershell
+python -m sim.eval2.scripts.play_diagnose_v2 `
+  --task Isaac-LeIsaac-SO101-Lift-Visual-V212-Play-v0 `
+  --num_envs 4 --num_episodes 16 `
+  --headless --enable_cameras `
+  --checkpoint "logs\rsl_rl\lift_v2_12\<timestamp>\model_<N>.pt"
+```
+
+**View scene seule (sans policy, pour vérifier randomisation cube)** :
+```powershell
+python -m sim.eval2.scripts.view --task Isaac-LeIsaac-SO101-Lift-RL-V210-View-v0
+```
+
+**Rebuild USD si scene.usd a été reset** (idempotent, garde des backups) :
+```powershell
+python -m sim.eval2.scripts.resize_cube_usd      # cube 3cm → 2cm
+python -m sim.eval2.scripts.recolor_table_usd    # table → #B8ADA9
+```
+
+### Cibles V2.12 (pour valider que ça marche)
+
+V2.12 = V2.9 reward+PPO + delta action. V2.9 atteignait 30% success deterministic sur env 2cm. V2.12 devrait atteindre similaire ou mieux, avec mouvement smooth par construction (vmax mécanique 6 rad/s).
+
+À iter 50-100 :
+- `reaching_object` ≥ 30% (V2.9 referenced)
+- `Mean action noise std` descend lentement de 1.0 vers 0.6-0.8
+- `joint_vel` reward < -0.5/ép (avec scale=0.20 delta, vmax 6 rad/s, |q_dot|² total max 6×36=216/step → joint_vel = -0.022/step → -3.3/ép max). Si > -3/ép sustained = bras bouge trop = à investiguer.
+
+À iter 150-300 :
+- Premiers `grasping_cube > 0%` (V2.9 firait à iter ~150)
+- `Mean episode length` reste à 150 (pas de drop early)
+
+À iter 500-1000 :
+- Premiers `lifting_object > 0%` puis `success_bonus > 0`
+
+À iter 1500 (fin) :
+- `Episode_Termination/success` > 30% (matche V2.9 baseline 30% sur env 2cm)
+- Au play_diagnose : `max_qdot ≤ 6 rad/s` (cap mécanique respecté), grasp duration > 10 steps (vs V2.9 = 2.2 steps)
+
+**Drapeau rouge** : si à iter ~100 reaching < 10% sur cette config → V2.9 ne convergeait pas non plus = quelque chose de plus fondamental est cassé (workspace, observations, etc). Workflow : run `play_diagnose_v2`, regarder action_sat_count (en delta mode ça doit être <50%), max_qdot (doit être ≤6 rad/s), min_jaw_z, et le reward_term_totals.
+
+### Ce qui ne marche PAS et qu'il NE faut PAS retenter
+
+(Liste des dead-ends. Ne pas re-suggérer comme nouveau.)
+
+| approche | pourquoi ça échoue | source |
+|---|---|---|
+| BC seul | spec TA exige RL pour Eval 2 | spec |
+| PPO from-scratch sur isaac_so_arm101 | env-side bugs (convex_decomp gripper, curriculum) + defaults instables | archive branch |
+| Scripted IK + magic-attach | SO-101 5-DoF + wrist_flex serré → grasp pas fiable | archive |
+| HIL-SERL real-robot | demande humain au gamepad, hors scope | choix |
+| ManiSkill (lerobot-sim2real) | user a choisi de garder Isaac Lab | choix |
+| `joint_acc_l2` weight non-zero | naturel ratio 700× joint_vel → domine, paralyse | V2.10/b/c |
+| Smoothness reward fort en mode ABSOLU | tente de cap velocity via gradient → soit paralyse (V2.10) soit insuffisant (V2.11) | V2.10/b/c, V2.11 v3 |
+| `JointPositionActionCfg` mode ABSOLU + scale petit | scale borne range, pas vitesse → arm bloqué (V2.11 v1) ou yeet possible (V2.9, V2.11 v2) | V2.9, V2.11 v1/v2 |
+| Warm-start V2.9 → smoothness fort | yeet motor program n'est pas un slow motor program lent → désapprend tout | V2.10 warm-start |
+| Lift-only gating (V2.11) | OK en théorie mais V2.9 grasp+lift est empiriquement prouvé converger, et avec delta control le predicate fire reliably | V2.11 v3 |
+
+### Variants disponibles (gym registers)
+
+Dans `sim/eval2/__init__.py` :
+
+```
+v1  isaac_so_arm101 stack (legacy archived)
+v2  V2 + grasping_cube term (lerobot-sim2real config)
+v3  V2 + curriculum off, gamma 0.95
+v4-7 LeIsaac scaffold + V2 / IsaacDefaults / V2.5 / V2.6
+v8-11 V2.7 / V2.8 / V2.8.5 (audit fixes)
+v12  V2.9 + cube_dropped penalty
+v13  V2.10 (smoothness ×500, échec)
+v14  V2.10b (joint_acc ÷33, plateau 4%)
+v15  V2.10c (+ ee_to_cube_distance, marche mieux mais lent)
+v16  V2.11 v1/v2/v3 (action.scale=0.20/0.5/0.5, all failed)
+v17  V2.12 (V2.9 reward + DELTA action, vmax 6 rad/s mech) — CURRENT
+```
+
+Chaque variante a 4 tasks : `RL-vN-v0`, `RL-vN-Play-v0`, `Visual-vN-v0`, `Visual-vN-Play-v0` (Play = 50 envs + no obs corruption).
+
+V210 a aussi `View-v0` (1 env, 2s episodes pour visualiser le cube spawn).
+
+### Files critiques (chemin relatif au repo)
+
+```
+sim/eval2/
+├── __init__.py                                # gym registers (66 tasks total)
+├── leisaac_lift_env_cfg.py                    # ALL env configs (1500+ lines, V2 → V2.11 v3)
+├── lift_smoketest_env_cfg.py                  # Phase A V2/V2.5 envs (legacy, archived)
+├── mdp/
+│   ├── __init__.py                            # MDP exports
+│   ├── observations.py                        # wrist_image_features + Phase C placeholders
+│   ├── rewards.py                             # custom reward fns (cube_grasped, cube_lifted_above_base, ee_to_cube_distance_l2, etc.)
+│   └── terminations.py                        # cube_dropped, cube_reached_goal
+├── policy/
+│   └── visual_encoder.py                      # frozen ResNet-18 encoder (eval mode, BN frozen)
+├── agents/
+│   ├── rsl_rl_ppo_cfg_v2.py
+│   ├── rsl_rl_ppo_cfg_v2_5.py through _v2_11.py    # PPO configs per variant
+│   └── rsl_rl_ppo_cfg_isaac_defaults.py
+└── scripts/
+    ├── train.py                               # wraps isaac_so_arm101.scripts.rsl_rl.train
+    ├── play.py                                # wraps isaac_so_arm101.scripts.rsl_rl.play
+    ├── play_diagnose_v2.py                    # detailed diagnostic with JSONL + summary
+    ├── view.py                                # zero-action scene viewer
+    ├── monitor_training.py                    # human-readable TB live monitor
+    ├── audit_scene.py                         # scene assumptions audit
+    ├── measure_cube_height.py                 # spawn z distribution
+    ├── inspect_cube_scale.py                  # USD bbox check
+    ├── resize_cube_usd.py                     # idempotent USD scale 3cm → 2cm
+    ├── recolor_table_usd.py                   # idempotent USD table color override
+    └── pad_v29_for_v210.py                    # V2.9 ckpt padder for V2.10 obs warm-start
+
+notes/
+├── eval2_pipeline.md                          # this file
+├── isaac_lab_setup.md
+├── project3_rl_final_details.md               # TA spec
+├── sanity_results.md
+└── full_pipeline_walkthrough.md
+```
+
+### Décodage rapide des metrics rsl_rl `Episode_Reward/<term>`
+
+Confirmé par cross-check avec `play_diagnose_v2.py reward_term_totals` :
+
+```
+Episode_Reward/<term>  =  mean(sum_per_episode) / max_episode_length_s
+                       =  mean(sum_per_episode) / 5    # car episode = 5s
+```
+
+Donc pour reverse-engineer le per-step value :
+```
+per_step_avg  =  Episode_Reward × 5 / 150 = Episode_Reward / 30
+```
+
+Exemples pour `reaching_object` (`1 - tanh(d/0.15)`) :
+- Episode_Reward = 0.43 → per-step = 0.014 → d ≈ 38cm avg
+- Episode_Reward = 0.4 → d ≈ 38cm avg
+- Episode_Reward = 0.7 → d ≈ 22cm avg
+- Episode_Reward = 1.0 → d ≈ 14cm avg
+- Episode_Reward = 2.0 → d ≈ 5cm avg (grasp territory)
+
+Pour `joint_vel_l2` (`Σ q_dot²` sur 6 joints) avec weight `-5e-3` (V2.11 v3) :
+- Episode_Reward = -1 → raw/step = 200/30 ≈ 6.7 → |q_dot|_avg/joint = √(6.7/6) ≈ 1.06 rad/s
+- Episode_Reward = -10 → |q_dot|_avg ≈ 3.3 rad/s (trop rapide, à surveiller)
+- Episode_Reward = -50 → |q_dot|_avg ≈ 7.5 rad/s (yeet, alarme rouge)
+
+### Drapeaux rouges au monitoring
+
+| signal | seuil "OK" | seuil "drapeau rouge" |
+|---|---|---|
+| `joint_vel` reward (V2.11 v3) | > -10/ép | < -50/ép (yeet) |
+| `noise_std` à iter 100 | > 0.25 | < 0.15 (commit prématuré) |
+| `reaching_object` à iter 100 | > 20% | < 5% (paralysie) |
+| `Episode_Termination/cube_dropped` | < 10% | > 30% (give-up exploit ou flick) |
+| `lifting_object` mais pas `grasping_cube` | n/a | flick exploit revient |
+
+### Open issues / risques actuels
+
+1. **V2.11 v3 pas encore train** — calibration -5e-3 à valider empiriquement. Risque : trop fort (paralysie) ou trop faible (yeet revient).
+2. **Phase C transfer de V2.10 placeholders** — quand Phase C démarre, faut padder le checkpoint V2.11 final si obs_dim change. Voir `scripts/pad_v29_for_v210.py` pour le pattern (script existant pour V2.9 → V2.10 transition).
+3. **Sim-to-real velocity check** — au deploy, vérifier `mean(|qdot|max)` sur 5 rollouts. Si > 4 rad/s, augmenter smoothness rewards encore. Si < 1.5 rad/s, c'est exécutable sur Feetech (~6 rad/s max).
+4. **Phase B ETA non clair** — V2.11 v3 si converge en ~1500 iters = ~14h sur RTX 5070. Si plateau, on essayera (a) reduire diff_threshold du grasp predicate à 5cm, (b) booster reaching std à 0.20.
+5. **RewardsCfgV285 `lifting_object` utilise `cube_lifted_and_grasped`** alors que V2.11 fait override avec `cube_lifted_above_base`. Si quelqu'un crée un nouveau variant inheritant V285 directement, il revient à V2.7 grasp gating. À surveiller.
 
 ---
 
@@ -72,9 +390,9 @@ Tout est dans la branche `archive/eval2-attempts-pre-reset` :
 
 ---
 
-## État actuel (2026-05-08)
+## État historique (2026-05-08) — POUR L'ÉTAT À JOUR (V2.11 v3) VOIR LA SECTION "🔄 ÉTAT POUR REPRISE" PLUS HAUT
 
-### Ce qui est en place ✅
+### Ce qui est en place ✅ (snapshot 2026-05-08, peut être obsolète)
 
 - **Repo réorganisé** post reset 2026-05-07 : `sim/eval2/` recréé proprement
 - **LeIsaac installé** dans le venv `isaac_so_arm101/.venv` :
@@ -193,7 +511,8 @@ Chaque variante teste une hypothèse précise. La progression est causale : chaq
 | 10 | **V2.10** | V2.9 + smoothness stack : `action_rate ×500` / `joint_vel ×100` / `joint_acc NEW` / `arm_action.scale 0.5→0.25` / `init_noise 1.0→0.4` / `entropy 0.005→0.002` + LeIsaac stock randomisation + USD edits (cube 2cm, table #B8ADA9) + obs pre-allocation Phase C | 🔴 **paralysie** (cold-start ET warm-start). `reaching` descend 1.5% → 0.42% en 95 iters | `joint_acc_l2 = -1e-3` produit -50/épisode vs -0.7 pour les deux autres smoothness → gradient "ne pas accélérer" écrase "approche le cube". Le warm-start V2.9 ne préserve pas non plus le yeet (programme moteur balistique non transférable au régime smooth). |
 | 11 | **V2.10b** | V2.10 avec `joint_acc_l2 -1e-3 → -3e-5` (÷33), tout le reste identique. Cold-start uniquement. | 🟡 smoothness OK mais reaching plat à 1.7%, policy drift loin du cube | `joint_acc` n'écrase plus le gradient (3 termes en parité), MAIS `reaching tanh std=0.15` sature à d>60cm → la policy s'éloigne sans signal pour revenir |
 | 12 | **V2.10c** | V2.10b + nouveau RewTerm `ee_to_cube_distance` linéaire `-||EE-cube||` weight=-1.0. Cold-start. | 🟡 marche mais lent (reaching 1.7% → 4.1% en 114 iters, projection convergence ~iter 1500+) | Linear distance débloque la dérive away from cube → policy s'approche enfin. Mais convergence trop lente parce que les poids smoothness V2.10 (héritages) sont trop forts. |
-| 13 | **V2.11** ⭐ | Aligné Isaac Lab Lift défauts : smoothness `action_rate -1e-4, joint_vel -1e-4, joint_acc 0` ; gating `lifted` only (revert V2.7 flick fix) ; lifting=15 (Isaac Lab) ; entropy_coef=0.005 ; cube_dropped_penalty=-5 (gardé) ; success_bonus=1500 (gardé). Keeps V2.10's action.scale=0.25, USD edits, randomization, placeholders, et V2.10c's `ee_to_cube_distance`. Cold-start. | 🟡 EN COURS | Reset après audit research: pratique publiée met smoothness dans action space, pas dans reward. Un seul innovation gardée (linear distance), reste = Isaac Lab défauts. |
+| 13 | **V2.11** | 3 sub-versions tentées : v1 scale=0.20 (échec, range trop restrictif), v2 scale=0.5 + smoothness=-1e-4 (échec, yeet revient), v3 scale=0.5 + smoothness=-5e-3 (annulé avant test) | 🔴 abandonné | Erreur conceptuelle : `JointPositionActionCfg` est en mode absolu, pas delta. Scale borne le range articulaire, pas la vitesse. → switch action class en V2.12. |
+| 14 | **V2.12** ⭐ | Action class : `JointPositionActionCfg` → **`RelativeJointPositionActionCfg`** (delta control, scale=0.20, use_zero_offset=True). vmax mécanique = 6 rad/s = limite Feetech. Reward = V2.9 (grasp+lift gating, smoothness=-1e-4 default) + ee_to_cube_distance. PPO = V2.9 (init_noise=1.0, entropy=0.005). | 🟡 À LANCER | V2.9 marchait sur la TÂCHE, le seul vrai problème était la VITESSE. Delta control la cap structurellement. Tout le reste = V2.9 verbatim. |
 
 ### Audit empirique de la scène (entre V2.8 et V2.8.5)
 
@@ -754,7 +1073,9 @@ Avec poids 5.0, c'est un **stepping stone** : reaching=1 → grasping=5 → lift
 | `action_rate_l2` weight | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -5e-2 (×500) | -5e-2 | -5e-2 | **-5e-3** ⭐ medium (v3) |
 | `joint_vel_l2` weight | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -1e-2 (×100) | -1e-2 | -1e-2 | **-5e-3** ⭐ medium (v3) |
 | `joint_acc_l2` weight | n/a | n/a | n/a | n/a | n/a | -1e-3 NEW | -3e-5 (÷33) | -3e-5 | **0** ⭐ drop |
-| `arm_action.scale` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.25 | 0.25 | 0.25 | **0.5** ⭐ revert (scale est ABSOLU pas delta — voir ci-dessous) |
+| `arm_action.scale` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.25 | 0.25 | 0.25 | 0.5 (V2.11 ABSOLU) |
+| **action class** | absolu | absolu | absolu | absolu | absolu | absolu | absolu | absolu | absolu | **DELTA (V2.12)** ⭐ |
+| `arm_action.scale` (V2.12 DELTA) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a → **0.20 (vmax 6 rad/s)** ⭐ |
 | `entropy_coef` (PPO) | 0.005 | 0.005 | 0.005 | 0.005 | 0.005 | **0.002** | 0.002 | 0.002 | **0.005** ⭐ revert |
 | Cube spawn pose_range | x±5cm, y∈(-16,-10) | idem | idem | idem | idem | x±7.5cm, y±7.5cm, yaw±30° | idem | idem | idem |
 | Cube taille (USD) | 3 cm | 3 cm | 3 cm | 3 cm | 3 cm | 2 cm | 2 cm | 2 cm | 2 cm |
