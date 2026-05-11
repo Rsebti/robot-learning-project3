@@ -64,7 +64,7 @@ class CommandsCfg:
         asset_name="robot",
         body_name="gripper",  # LeIsaac uses "gripper", not "gripper_link"
         resampling_time_range=(5.0, 5.0),
-        debug_vis=True,
+        debug_vis=False,  # set to True to draw the goal pose RGB axis arrows
         ranges=UniformPoseCommandCfg.Ranges(
             pos_x=(-0.05, 0.05),
             pos_y=(-0.20, -0.10),
@@ -1893,6 +1893,654 @@ class LeIsaacLiftCubeRLVisualEnvCfgV212(LeIsaacLiftCubeRLVisualEnvCfgV210):
 @configclass
 class LeIsaacLiftCubeRLVisualEnvCfgV212_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV212):
     """Smaller scene + no obs corruption for replaying a V2.12 visual ckpt."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+# ---------------------------------------------------------------------------
+# V2.13 — V2.12 + 3 fixes for snake/scoop pathology and action saturation.
+#
+# Diagnostic V2.12 model_900 (play_diagnose_v2 + visual play):
+#   - Action histogram: shoulder_lift p95=+2.66, wrist_flex p25=-2.52,
+#     gripper p05=-5.94 — actions saturate FAR beyond [-1, 1] expected
+#     range. The DELTA action class has no clip → vmax breach (peak
+#     16-21 rad/s observed, vs Feetech limit 6 rad/s).
+#   - Posture: gripper-down score = +0.17 (avg) / -0.27 at GRASP.
+#     Steps with gripper down (>0.5): 0/150. Min jaw_z BEFORE first
+#     grasp = 5.5cm (table top is 4.15cm → jaw scrapes table). The
+#     policy approaches HORIZONTALLY with the jaw at table level and
+#     the gripper actually pointing UPWARD at grasp moment. Sim-to-
+#     real impossible (table friction model differs).
+#
+# V2.13 = V2.12 + 3 fixes:
+#   1. Action `clip={".*": (-1.0, 1.0)}` — finally enforces the
+#      mechanical vmax = 6 rad/s that V2.12 promised but didn't deliver.
+#   2. NEW `gripper_orientation_penalty` (weight -1.0) — penalty for
+#      gripper z-axis not pointing down. Implemented as PENALTY (not
+#      bonus) to avoid the "free reward for standing still in good
+#      posture" exploit. Neutral state = pointing down, deviation costs.
+#   3. NEW `scoop_grasp_penalty` (weight -10.0) — penalty when
+#      EE-palm height > wrist height (geometric inversion of top-down
+#      grasp). Threshold-free, robust across robot configs.
+#
+# Together (2)+(3) make the top-down posture the only stable optimum:
+# gripper must point down AND wrist must stay above the gripper.
+# All other V2.12 reward shaping preserved (grasp+lift gating, weights,
+# success_bonus=2500, cube_dropped_penalty=-50, ee_to_cube_distance,
+# relative obs vectors, ee_far_from_cube DoneTerm).
+#
+# PPO config unchanged from V2.12 (V2.9 baseline that proved convergent).
+# Cold-start only — V2.12 is committed to scoop, can't be unlearned.
+# ---------------------------------------------------------------------------
+
+
+@configclass
+class RewardsCfgV213(RewardsCfgV212):
+    """V2.13 v2 — V2.12 + posture/scoop penalties (calibrated softer).
+
+    History: V2.13 v1 (initial) had gripper_orientation_penalty=-1.0,
+    scoop_grasp_penalty=-10.0, cube_dropped=-150, ee_far_from_cube
+    DoneTerm active. At iter 0-50 the policy DIVERGED via give-up
+    exploit: episodes terminated at step 18-30 by triggering
+    ee_far_from_cube (no penalty paired) to escape the heavy
+    per-step penalty regime. noise_std went UP (1.0 → 1.13) and
+    reaching went DOWN (10% → 0.5%).
+
+    V2.13 v2 fixes (this class):
+      - scoop_grasp_penalty: -10 → -5 (less brutal but still bites scoop)
+      - reaching_object: 1.0 → 1.5 (boost positive signal so policy
+        has clear net-positive baseline near cube)
+      - cube_dropped_penalty: -150 → -30 (in env __post_init__)
+      - REMOVE ee_far_from_cube DoneTerm (in env __post_init__) —
+        eliminates the give-up exploit channel
+      - gripper_orientation_penalty: keep -1.0 (gentle guide)
+
+    With reaching boost +1.5 and softer penalties, baseline at random
+    init is ~0/ep (reach +75 vs orientation -75 + scoop -25 = balanced).
+    Removes give-up incentive. PPO must explore toward grasp/lift to
+    find positive territory.
+    """
+
+    # V2.13 v2 — boost reaching to make baseline non-negative at random init.
+    # Inherited from V2.8.5: weight=1.0. Override to +1.5.
+    reaching_object = RewTerm(
+        func=lift_mdp.object_ee_distance,
+        params={
+            "std": 0.15,
+            "object_cfg": SceneEntityCfg("cube"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+        },
+        weight=1.5,
+    )
+
+    gripper_orientation_penalty = RewTerm(
+        func=eval2_mdp.gripper_orientation_penalty,
+        params={"ee_frame_cfg": SceneEntityCfg("ee_frame")},
+        weight=-1.0,
+    )
+
+    scoop_grasp_penalty = RewTerm(
+        func=eval2_mdp.scoop_grasp_penalty,
+        params={
+            "robot_cfg": SceneEntityCfg("robot", body_names="wrist"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+        },
+        weight=-5.0,
+    )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV213(LeIsaacLiftCubeRLEnvCfgV212):
+    """V2.13 state-only env: V2.12 + clip on action + posture penalties."""
+
+    rewards: RewardsCfgV213 = RewardsCfgV213()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # V2.13 fix #1: add clip to action term.
+        # V2.12 used RelativeJointPositionActionCfg(scale=0.20) without
+        # clip → policy outputs raw actions up to ±6 → joint delta up to
+        # 1.2 rad/step → vmax peak 36 rad/s (way above Feetech 6 rad/s).
+        # With clip={".*": (-1.0, 1.0)}, raw action is bounded to ±1
+        # before scale → joint delta capped at 0.20 rad/step → vmax = 6
+        # rad/s mechanical (Feetech-aligned, sim-to-real safe).
+        self.actions.arm_action = base_mdp.RelativeJointPositionActionCfg(
+            asset_name="robot",
+            joint_names=["shoulder_pan", "shoulder_lift", "elbow_flex",
+                         "wrist_flex", "wrist_roll"],
+            scale=0.20,
+            use_zero_offset=True,
+            clip={".*": (-1.0, 1.0)},
+        )
+
+        # V2.13 v2 reward overrides:
+        # cube_dropped_penalty: -150 (v1) → -30 (v2). Still strong enough
+        # to make Touch-and-Yeet net-negative (yeet ~+25 reward, drop -30
+        # → net -5). Less crippling for accidental drops during learning.
+        self.rewards.cube_dropped_penalty = RewTerm(
+            func=eval2_mdp.cube_dropped_float,
+            params={
+                "world_z_threshold": 0.04,
+                "cube_cfg": SceneEntityCfg("cube"),
+            },
+            weight=-30.0,
+        )
+        self.rewards.success_bonus = RewTerm(
+            func=eval2_mdp.cube_at_goal,
+            params={
+                "distance_threshold": 0.05,
+                "command_name": "object_pose",
+                "cube_cfg": SceneEntityCfg("cube"),
+                "robot_cfg": SceneEntityCfg("robot"),
+            },
+            weight=2500.0,
+        )
+
+        # V2.13 v2 critical fix — REMOVE ee_far_from_cube DoneTerm.
+        # V2.13 v1 had this fail-fast active (inherited from V2.12). With
+        # V2.13's per-step penalties active, the policy DIVERGED by
+        # learning to wander out (>0.5m from cube) to trigger this
+        # DoneTerm and escape the penalty regime — episodes ended at
+        # step 18 vs max 150. This DoneTerm has no associated reward
+        # penalty, so triggering it is "free escape" → unstoppable
+        # give-up exploit. Removing the DoneTerm forces episodes to
+        # run full 150 steps; policy must find positive reward (grasp,
+        # lift, track) to maximize, can't escape via wandering.
+        # V2.12 showed this DoneTerm rarely fires naturally (0/16 ep
+        # at model_900) so removing it has no downside in normal play.
+        self.terminations.ee_far_from_cube = None
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV213_PLAY(LeIsaacLiftCubeRLEnvCfgV213):
+    """Smaller scene + no obs corruption for replaying a V2.13 checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV213(LeIsaacLiftCubeRLVisualEnvCfgV212):
+    """V2.13 visual env: V2.12 visual + clip on action + posture penalties."""
+
+    rewards: RewardsCfgV213 = RewardsCfgV213()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # V2.13 fix #1: clip on action (see state-only env for rationale).
+        self.actions.arm_action = base_mdp.RelativeJointPositionActionCfg(
+            asset_name="robot",
+            joint_names=["shoulder_pan", "shoulder_lift", "elbow_flex",
+                         "wrist_flex", "wrist_roll"],
+            scale=0.20,
+            use_zero_offset=True,
+            clip={".*": (-1.0, 1.0)},
+        )
+
+        # V2.13 v2 (see state-only env for rationale):
+        # cube_dropped_penalty -150 → -30, remove ee_far_from_cube DoneTerm.
+        self.rewards.cube_dropped_penalty = RewTerm(
+            func=eval2_mdp.cube_dropped_float,
+            params={
+                "world_z_threshold": 0.04,
+                "cube_cfg": SceneEntityCfg("cube"),
+            },
+            weight=-30.0,
+        )
+        self.rewards.success_bonus = RewTerm(
+            func=eval2_mdp.cube_at_goal,
+            params={
+                "distance_threshold": 0.05,
+                "command_name": "object_pose",
+                "cube_cfg": SceneEntityCfg("cube"),
+                "robot_cfg": SceneEntityCfg("robot"),
+            },
+            weight=2500.0,
+        )
+
+        # V2.13 v2 critical fix — REMOVE ee_far_from_cube DoneTerm
+        # (see state-only env for full rationale).
+        self.terminations.ee_far_from_cube = None
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV213_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV213):
+    """Smaller scene + no obs corruption for replaying a V2.13 visual ckpt."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+# ---------------------------------------------------------------------------
+# V2.13 v3 — sign-bug fix on gripper_orientation_penalty + reward landscape
+# overhaul to escape the "hover above cube" local optimum that V2.13 v2
+# converged on.
+#
+# Diagnostic post-mortem (V2.13 v2 model_100, iter 128, crashed VF blowup):
+#   - 16/16 episodes TIMEOUT, 0% success, 0% grasp, 0% drop
+#   - min jaw.z = +0.173m sustained (EE hovers 12cm ABOVE the 5cm cube top)
+#   - gripper_orientation_penalty stuck at -0.10/ep — looked "good" but
+#     was actually a LIE: the old quat-based formula returned 0 (no penalty)
+#     when gripper pointed UP and 2 when DOWN, because the gripper frame's
+#     local +z axis points BACKWARD (toward base), not toward the jaw.
+#     Confirmed by dump_scene_frames: gripper frame at home has local +z →
+#     -world_y (back into robot).
+#   - Visual replay (2026-05-11): policy converged on "shoulder_lift at
+#     +1.745 max, wrist_flex at -1.658 min, gripper pointing UP, hovering"
+#   - reaching_object tanh saturated at 0.72 from iter 60+, no descent
+#     gradient (tanh asymptote)
+#   - scoop_grasp_penalty at -0.27/ep but RANDOM rollout shows 0% fire
+#     on gripper-down samples → redundant with the new orientation penalty
+#     when the sign is fixed
+#
+# V2.13 v3 = 4 fixes (env-side only, PPO unchanged):
+#   1. gripper_orientation_penalty REWRITTEN (in mdp/rewards.py) to use
+#      jaw_z vs palm_z directly. Unambiguous, position-based, no quat math.
+#      Returns 0 when jaw ≤ palm (top-down OK), ~1 when jaw is 5cm above
+#      palm (fully up). Weight = -5.0 (strong enough to overcome any
+#      scoop bias).
+#   2. scoop_grasp_penalty DROPPED (weight 0). Random rollout confirmed
+#      it fires 0% on gripper-down samples — redundant.
+#   3. reaching_object tanh DROPPED (weight 0). Saturated at 0.72 from
+#      iter 60+, no descent gradient remaining.
+#   4. ee_to_cube_distance BOOSTED (weight -1.0 → -3.0). Becomes the
+#      only non-saturating driver toward the cube. Linear in distance,
+#      drives vertical descent reliably.
+#
+# Cold-start required: model_100 has internalized the gripper-UP pose,
+# irrecoverable. PPO config unchanged (still uses lift_v2_13 experiment
+# name — V213v3 logs will go into the same logs/rsl_rl/lift_v2_13/ dir,
+# distinguished by timestamp + env.yaml weights).
+# ---------------------------------------------------------------------------
+
+
+@configclass
+class RewardsCfgV213v3(RewardsCfgV213):
+    """V2.13 v3 — sign-fixed gripper_orientation_penalty + reward overhaul.
+
+    Inherits RewardsCfgV213 (V2.13 v2 stack) and overrides 4 weights:
+      - reaching_object              : 1.5 → 3.0   (boosted for suicide insurance)
+      - ee_to_cube_distance          : -1.0 → -3.0 (linear driver, boosted)
+      - gripper_orientation_penalty  : -1.0 → -5.0 (sign-fixed in rewards.py)
+      - scoop_grasp_penalty          : -5.0 → 0.0  (redundant, dropped)
+
+    Other terms (grasping_cube, lifting_object, object_goal_tracking,
+    success_bonus, cube_dropped_penalty, action_rate, joint_vel) inherit
+    unchanged from RewardsCfgV213.
+
+    Why reaching_object = +3.0 instead of 0 (anti-suicide insurance):
+        With reach=0 + linear=-3 + orient=-5, the per-step cost at cold-start
+        is ≈ -3.22 (d≈0.24m, orient random ≈0.5). Total timeout cost = -483/ep.
+        Suicide-by-drop at step 20 costs only -94 (-30 drop + 64 partial cost).
+        PPO advantage would prefer suicide ×5 over slow learning.
+        Reaching=+3 reactivates a positive bonus near the cube: at d=0.05m
+        with tanh(d/0.15) → reach=+2.04/step. Combined with orient=0 (gripper
+        down by V213v3 penalty -5) and linear=-0.15/step → net +1.89/step.
+        Stay-near saturates at +283/ep, which dominates suicide at -94/ep.
+        The orient=-5 penalty prevents the hover-at-elevation V2.13 v2 mode
+        because gripper-up costs heavily — policy must descend toward cube
+        to stay near in down posture.
+    """
+
+    reaching_object = RewTerm(
+        func=lift_mdp.object_ee_distance,
+        params={
+            "std": 0.15,
+            "object_cfg": SceneEntityCfg("cube"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+        },
+        weight=3.0,   # V213v3: 1.5 → 3.0 (anti-suicide insurance, see class docstring)
+    )
+
+    gripper_orientation_penalty = RewTerm(
+        func=eval2_mdp.gripper_orientation_penalty,
+        params={"ee_frame_cfg": SceneEntityCfg("ee_frame")},
+        weight=-5.0,  # V213v3: -1.0 → -5.0 (sign-fixed formula, strong push to down)
+    )
+
+    scoop_grasp_penalty = RewTerm(
+        func=eval2_mdp.scoop_grasp_penalty,
+        params={
+            "robot_cfg": SceneEntityCfg("robot", body_names="wrist"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+        },
+        weight=0.0,   # V213v3: -5.0 → 0.0 (redundant with sign-fixed orientation)
+    )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV213v3(LeIsaacLiftCubeRLEnvCfgV213):
+    """V2.13 v3 state-only env — sign-fixed orientation + reward overhaul."""
+
+    rewards: RewardsCfgV213v3 = RewardsCfgV213v3()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # V213v3: boost ee_to_cube_distance linear driver to -3.0.
+        # Inherited from V285 chain → was -1.0. We override it here after
+        # super() because the class-level field on RewardsCfgV213v3 above
+        # would be enough, but @configclass MRO can be subtle so we
+        # re-assert defensively.
+        self.rewards.ee_to_cube_distance = RewTerm(
+            func=eval2_mdp.object_ee_distance_l2,
+            params={
+                "object_cfg": SceneEntityCfg("cube"),
+                "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            },
+            weight=-3.0,
+        )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV213v3_PLAY(LeIsaacLiftCubeRLEnvCfgV213v3):
+    """Smaller scene + no obs corruption for replaying a V2.13 v3 checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV213v3(LeIsaacLiftCubeRLVisualEnvCfgV213):
+    """V2.13 v3 visual env — sign-fixed orientation + reward overhaul."""
+
+    rewards: RewardsCfgV213v3 = RewardsCfgV213v3()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.rewards.ee_to_cube_distance = RewTerm(
+            func=eval2_mdp.object_ee_distance_l2,
+            params={
+                "object_cfg": SceneEntityCfg("cube"),
+                "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            },
+            weight=-3.0,
+        )
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV213v3_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV213v3):
+    """Smaller scene + no obs corruption for replaying a V2.13 v3 visual ckpt."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+# ---------------------------------------------------------------------------
+# V2.14 — "Slow & Precise" fix for V2.13 v3's Bang-Bang smash exploit.
+#
+# Diagnostic V2.13 v3 model_100 (play_diagnose 2026-05-11):
+#   - GOOD: 50% phase=GRASPED (up from 0% in V213v2). Sign-fixed orientation
+#     penalty works — gripper is geometrically top-down (jaw below palm).
+#     No suicide-by-drop (drop rate 0%). Reach signal active.
+#   - BAD: "Bang-Bang vertical smash" emerged. Policy commits shoulder_lift
+#     to clip+1 (max DOWN) every step → joints saturate at +1.745 rad limit
+#     in ~5-7 steps → jaws crash table at 75 rad/s (12× the Feetech 6 rad/s
+#     limit; the clip on the RAW action only limits commanded velocity, not
+#     the qdot spike induced by contact constraints).
+#   - Symptoms:
+#     - time-to-first-grasp = 9.9 steps = 0.33s (way too fast)
+#     - table sliding 147/150 steps (98%, jaw_z < 0.06m)
+#     - tip below table 5/16 ep (31%, physics breach)
+#     - max |qdot| up to 75 rad/s (no chance for Feetech servo to track)
+#     - grasps brief & unstable: 9 grasp events, all 9 ended in grasp_LOST
+#       (slip=4, ejection=5), 0 lifts despite 8/16 ep reaching GRASPED phase
+#
+# Root cause (PPO bang-bang control):
+#   ee_to_cube_distance at -3.0 per step creates a strong time-pressure: every
+#   step spent far from cube costs reward. PPO's optimal is to traverse the
+#   distance AS FAST AS POSSIBLE — even if that means smashing into the table.
+#   The reward landscape says "rush down" because nothing penalizes the rush
+#   strongly enough to overcome the per-step distance cost.
+#
+# V2.14 = V2.13 v3 + 4 changes (env-side only, PPO unchanged):
+#   1. episode_length_s 5.0 → 10.0s (300 steps): aligns with teleop pacing
+#      (10-15s episodes), gives the policy time to be slow without missing
+#      grasp opportunities.
+#   2. arm_action.scale 0.20 → 0.10: HARD speed cap at vmax = 0.10 / (1/30s)
+#      = 3 rad/s (= 50% of Feetech 6 rad/s limit). Even when the policy
+#      commands +1 raw, the actuator delta is now ±0.10 rad/step → physical
+#      maximum velocity falls to 3 rad/s. Sim-to-real even safer.
+#   3. joint_vel_l2 weight -1e-4 → -1e-3 (×10): soft smoothness penalty as
+#      backup to the hard cap. Calibrated 10× below the V2.10 paralysis
+#      threshold (-1e-2 caused full paralysis cold-start).
+#   4. action_rate_l2 weight -1e-4 → -1e-3 (×10): discourages saccades and
+#      "anticipate-then-slam" Δaction patterns. Encourages anticipating
+#      table contact and decelerating.
+#
+# Cold-start required: V213v3's rush strategy is internalized.
+# ETA unchanged (~14h on RTX 5070): num_steps_per_env=50 stays the same,
+# only fewer episodes complete per iter but same training data quantity.
+# ---------------------------------------------------------------------------
+
+
+@configclass
+class RewardsCfgV214(RewardsCfgV213v3):
+    """V2.14 — V2.13 v3 + boosted smoothness penalties (joint_vel & action_rate ×10).
+
+    Inherits RewardsCfgV213v3 (sign-fixed orient + reach+3 + ee_to_cube-3 +
+    scoop dropped) and overrides 2 weights:
+      - joint_vel_l2   : -1e-4 → -1e-3 (×10 soft smoothness penalty)
+      - action_rate_l2 : -1e-4 → -1e-3 (×10 discourage saccades)
+
+    All other terms unchanged from V213v3.
+
+    Why ×10 and not ×50 (other LLM's "Aérofreins" proposal):
+        V2.10 used joint_vel_l2 = -1e-2 (×100 from default) → full paralysis
+        at cold-start (reaching dropped from 1.5% to 0.4% in 95 iters).
+        V2.10b used -3e-5 (÷33) → smoothness OK but reaching plateau at 1.7%.
+        V2.11 v3 attempted -5e-3 (medium) but was annulled before testing.
+        ×10 = -1e-3 sits 5× below the proven paralysis threshold, giving
+        margin for the harder constraint we have on top: action.scale=0.10
+        (hard cap vmax 3 rad/s). The hard cap does most of the work; this
+        soft penalty just discourages residual fast spikes.
+    """
+
+    action_rate = RewTerm(
+        func=base_mdp.action_rate_l2,
+        weight=-1e-3,   # V214: -1e-4 → -1e-3 (×10)
+    )
+
+    joint_vel = RewTerm(
+        func=base_mdp.joint_vel_l2,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+        weight=-1e-3,   # V214: -1e-4 → -1e-3 (×10)
+    )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV214(LeIsaacLiftCubeRLEnvCfgV213v3):
+    """V2.14 state-only env — V2.13 v3 + 10s episodes + scale 0.10 + smoothness ×10.
+
+    Designed to kill the Bang-Bang smash exploit by:
+      (a) extending episode length to 10s (matching teleop pacing),
+      (b) hard-capping commanded vmax at 3 rad/s via action scale halving,
+      (c) softly penalizing residual high velocity / saccades via reward ×10.
+    """
+
+    rewards: RewardsCfgV214 = RewardsCfgV214()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # V214 fix #1: longer episodes (5s → 10s = 300 steps at 30 Hz).
+        # Aligns with teleop pacing (10-15s for pick-and-place).
+        # NB: this also changes the rsl_rl normalization of Episode_Reward/X
+        # (= per-ep cumsum / max_episode_length_s) so reported values will be
+        # smaller for the same per-step rate.
+        self.episode_length_s = 10.0
+
+        # V214 fix #2: hard speed cap via action scale halving.
+        # Original V213 scale=0.20 → vmax = 0.20 / (1/30s) = 6 rad/s = Feetech limit.
+        # V214 scale=0.10  → vmax = 0.10 / (1/30s) = 3 rad/s = 50% of Feetech.
+        # Even with raw action saturated at clip ±1, per-step joint delta is
+        # capped at ±0.10 rad → physical maximum velocity = 3 rad/s.
+        self.actions.arm_action = base_mdp.RelativeJointPositionActionCfg(
+            asset_name="robot",
+            joint_names=["shoulder_pan", "shoulder_lift", "elbow_flex",
+                         "wrist_flex", "wrist_roll"],
+            scale=0.10,
+            use_zero_offset=True,
+            clip={".*": (-1.0, 1.0)},
+        )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV214_PLAY(LeIsaacLiftCubeRLEnvCfgV214):
+    """Smaller scene + no obs corruption for replaying a V2.14 checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV214(LeIsaacLiftCubeRLVisualEnvCfgV213v3):
+    """V2.14 visual env — V2.13 v3 visual + 10s episodes + scale 0.10 + smoothness ×10."""
+
+    rewards: RewardsCfgV214 = RewardsCfgV214()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.episode_length_s = 10.0
+        self.actions.arm_action = base_mdp.RelativeJointPositionActionCfg(
+            asset_name="robot",
+            joint_names=["shoulder_pan", "shoulder_lift", "elbow_flex",
+                         "wrist_flex", "wrist_roll"],
+            scale=0.10,
+            use_zero_offset=True,
+            clip={".*": (-1.0, 1.0)},
+        )
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV214_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV214):
+    """Smaller scene + no obs corruption for replaying a V2.14 visual ckpt."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+# ---------------------------------------------------------------------------
+# V2.15 — "Strict Top-Down" — fixes V2.14's snake-mode local optimum.
+#
+# Visual replay diagnostic V2.14 model_100 (2026-05-11) :
+#   - Bang-Bang killed (qdot 27 → 5 mean, 0% physics breach). ✅
+#   - But policy converged on SNAKE/HORIZONTAL approach: shoulder lift +0.97,
+#     wrist_flex +0.87, elbow +0.82 → arm extends low and forward, gripper
+#     skims table at jaw_z ~0.05m, approaches cube laterally instead of from
+#     above.
+#   - 98% of steps with jaw_z < 0.06m (table-sliding).
+#   - 0% LIFTING phase reached.
+#   - The V213v3 `gripper_orientation_penalty` (clamp((jaw_z - palm_z)/0.05))
+#     returns 0 in BOTH top-down (jaw below palm) AND horizontal (jaw beside
+#     palm at same z). Two zero-penalty local optima exist; PPO chose
+#     horizontal by exploration luck.
+#
+# V2.15 = V2.14 + 2 fixes (env-side only, PPO unchanged):
+#   1. REPLACE gripper_orientation_penalty function with the direction-
+#      based version `gripper_pointing_direction_penalty`. Uses the
+#      world-frame palm→jaw direction (normalized). Returns 0 (top-down),
+#      1 (horizontal), 2 (gripper-up). Same weight -5.0.
+#      This catches both gripper-up AND horizontal/snake.
+#   2. ADD `jaw_below_cube_penalty` reward term. Penalizes jaw_z going
+#      below the live cube bottom (= cube_z - 0.010m). Weight -50.
+#      Doesn't fire on V214's current behavior (min jaw_z=0.042 vs
+#      cube_bottom=0.031, margin 1.1cm). Acts as safety net against
+#      future regression toward physics breaches.
+#
+# Cold-start required : V2.14's snake strategy is internalized.
+# ETA ~14-19h. Same PPO config (LiftCubePPORunnerCfgV213).
+#
+# Empirical dimension verifications (from dump_scene_frames):
+#   - cube.root_pos_w.z = 0.041 (constant at reset, USD-defined)
+#   - cube_half_size = 0.010 (USD bbox)
+#   - cube_bottom_z = 0.031 (= table top, matches LeIsaac scene)
+#   - cube_top_z = 0.051
+#   - V214 min jaw_z (model_100) = 0.042 → 1.1cm above cube_bottom → no
+#     jaw_below_cube penalty fires on current behavior.
+#   - V213v3 min jaw_z (model_100) = 0.010 → 2.1cm BELOW cube_bottom →
+#     penalty would have cost ~30/ep, deterring physics breach.
+# ---------------------------------------------------------------------------
+
+
+@configclass
+class RewardsCfgV215(RewardsCfgV214):
+    """V2.15 — V2.14 + strict-top-down (palm→jaw direction) + jaw_below_cube.
+
+    Inherits RewardsCfgV214 (V213v3 weights + smoothness ×10) and:
+      - REPLACES `gripper_orientation_penalty` term with the direction-
+        based function (same name in MDP namespace; weight unchanged at
+        -5.0).
+      - ADDS new `jaw_below_cube_penalty` term at weight -50.
+
+    All other terms inherited from V214 unchanged.
+    """
+
+    gripper_orientation_penalty = RewTerm(
+        func=eval2_mdp.gripper_pointing_direction_penalty,   # V215 new fn
+        params={"ee_frame_cfg": SceneEntityCfg("ee_frame")},
+        weight=-5.0,
+    )
+
+    jaw_below_cube_penalty = RewTerm(
+        func=eval2_mdp.jaw_below_cube_penalty,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "cube_half_size": 0.010,
+        },
+        weight=-50.0,
+    )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV215(LeIsaacLiftCubeRLEnvCfgV214):
+    """V2.15 state-only env — V2.14 + strict-top-down + jaw_below_cube."""
+
+    rewards: RewardsCfgV215 = RewardsCfgV215()
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV215_PLAY(LeIsaacLiftCubeRLEnvCfgV215):
+    """Smaller scene + no obs corruption for replaying a V2.15 checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV215(LeIsaacLiftCubeRLVisualEnvCfgV214):
+    """V2.15 visual env — V2.14 visual + strict-top-down + jaw_below_cube."""
+
+    rewards: RewardsCfgV215 = RewardsCfgV215()
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV215_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV215):
+    """Smaller scene + no obs corruption for replaying a V2.15 visual ckpt."""
 
     def __post_init__(self) -> None:
         super().__post_init__()

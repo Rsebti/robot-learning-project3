@@ -387,6 +387,208 @@ def object_ee_distance_l2(
     return torch.norm(cube_pos_w - ee_pos_w, dim=-1)
 
 
+# ---------------------------------------------------------------------------
+# V2.13 — posture-shaping rewards to force top-down grasp.
+#
+# Diagnostic V2.12 (model_900) showed the policy converged on a "scoop"
+# motor program: jaw at z ≈ 5cm (table level), gripper z-axis pointing
+# upward (-0.27 score), wrist tucked under the gripper, fingers reaching
+# horizontally / from below. This is unsuitable for sim-to-real transfer
+# (table friction will not match in real world) and looks unnatural.
+#
+# V2.13 adds two soft constraints:
+#
+# 1. `gripper_orientation_penalty` — penalty when the gripper z-axis
+#    deviates from the world -z direction (pointing down). Implemented
+#    as a PENALTY (not a bonus) so the policy can't farm a free "+1/step
+#    for staying still while pointing down". The neutral state is
+#    "pointing perfectly down"; any deviation costs reward.
+#
+# 2. `scoop_grasp_penalty` — penalty when the EE (gripper palm) is at a
+#    higher world z than the wrist body. In a top-down grasp the wrist
+#    is ALWAYS above the gripper (kinematic chain: ... → wrist → gripper
+#    → jaw). In a scoop grasp, the wrist twists under so its z falls
+#    below the gripper's z. This penalty is purely geometric — no
+#    threshold tuning needed.
+#
+# Together they force the only stable optimum to be a top-down grasp.
+# ---------------------------------------------------------------------------
+
+
+def gripper_orientation_penalty(
+    env: ManagerBasedRLEnv,
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+) -> torch.Tensor:
+    """Penalty when gripper points UP (jaw above palm in world frame).
+
+    **V2.13 v3 rewrite** — the previous formulation used quaternion math
+    on the "gripper" body's local +z axis, assuming +z = the gripping
+    direction. ``dump_scene_frames`` revealed that on SO-101 / LeIsaac
+    the gripper frame's local +z actually points BACKWARD (toward the
+    robot base), not toward the jaws. So ``1 + z_world[..., 2]`` returned
+    0 when the gripper was pointing UP and 2 when pointing DOWN — the
+    sign was INVERTED. With weight=-1.0 the policy was rewarded for
+    pointing the gripper UP, and that's exactly the pose V2.13 v2
+    converged on at iter 60+ (visually confirmed: gripper jaws facing
+    the ceiling, EE hovering 17cm above the cube).
+
+    V2.13 v3 uses a position-based formulation that is **unambiguous**
+    regardless of URDF axis conventions: compare the world-frame Z of
+    the palm (ee_frame target[0]) and the jaw (target[1]). In a clean
+    top-down grasp the jaw is BELOW the palm; in a gripper-up pose the
+    jaw is ABOVE.
+
+    Returns ``clamp((jaw_z - palm_z) / 0.05, min=0)``:
+      - 0.0   when jaw ≤ palm (top-down or horizontal — no penalty)
+      - ~1.0  when jaw is ~5 cm above palm (fully gripper-up)
+      - linearly interpolates in between
+
+    Use with **NEGATIVE weight** (e.g. -5.0 in V2.13 v3). The neutral
+    pose (top-down) costs nothing; any tilt toward "fingers reaching up"
+    actively costs reward.
+
+    NB: pairs with the old ``scoop_grasp_penalty`` only conceptually now
+    — in V2.13 v3 the scoop term is dropped (weight=0) because random
+    rollouts showed it fires only 0% of the time on gripper-down samples
+    (i.e., it's redundant with this new orientation penalty once the
+    sign is fixed).
+    """
+    ee_frame = env.scene[ee_frame_cfg.name]
+    palm_z = ee_frame.data.target_pos_w[..., 0, 2]   # target[0] = "gripper"
+    jaw_z = ee_frame.data.target_pos_w[..., 1, 2]    # target[1] = "jaw"
+    return torch.clamp((jaw_z - palm_z) / 0.05, min=0.0)
+
+
+def scoop_grasp_penalty(
+    env: ManagerBasedRLEnv,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="wrist"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+) -> torch.Tensor:
+    """Penalty when the EE (gripper palm) is higher than the wrist body.
+
+    In a clean top-down grasp the kinematic chain has wrist above
+    gripper-palm above jaw → wrist_z >= palm_z >= jaw_z. In a scoop
+    grasp the wrist twists underneath the gripper (palm), so the
+    geometric inversion ee_z > wrist_z is the diagnostic of "fingers
+    reaching up from below" instead of "fingers descending from above".
+
+    Returns 0.0 when wrist_z >= ee_z (top-down geometry — no penalty).
+    Returns the positive overshoot (= ee_z - wrist_z) when ee is above
+    wrist (scoop geometry).
+
+    Use with **NEGATIVE weight** (e.g. -10.0). Threshold-free — works
+    for any table height, any goal pose, any robot config. The
+    constraint is purely geometric.
+
+    Pairs with `gripper_orientation_penalty`. Together they force the
+    top-down grasp posture as the only stable optimum.
+
+    Body name `wrist`: confirmed via `dump_body_names.py` on the SO-101
+    LeIsaac articulation (body chain: base → shoulder → upper_arm →
+    lower_arm → wrist → gripper → jaw).
+    """
+    robot: Articulation = env.scene[robot_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+    wrist_z = robot.data.body_pos_w[:, robot_cfg.body_ids[0], 2]
+    ee_z = ee_frame.data.target_pos_w[..., 0, 2]
+    return torch.clamp(ee_z - wrist_z, min=0.0)
+
+
+def gripper_pointing_direction_penalty(
+    env: ManagerBasedRLEnv,
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+) -> torch.Tensor:
+    """V2.15 — Penalty when the palm→jaw vector doesn't point DOWN in world.
+
+    Computes the normalized vector from palm (ee_frame target[0]) to jaw
+    (ee_frame target[1]) in world frame, and uses its z-component as the
+    "down score". This is unambiguous regardless of URDF axis conventions
+    because it uses real WORLD POSITIONS — no quaternion math, no local
+    axis interpretation.
+
+    Returns:
+        0.0   when palm→jaw points straight DOWN (top-down grasp posture).
+        1.0   when palm→jaw is horizontal (snake/sideways approach).
+        2.0   when palm→jaw points UP (gripper-up posture).
+
+    Use with **NEGATIVE weight** (e.g. -5.0 in V2.15). This catches BOTH
+    gripper-up (V2.13 v2 failure) AND horizontal/snake (V2.14 failure),
+    forcing strict top-down posture as the only zero-penalty configuration.
+
+    Why this supersedes the V2.13 v3 `gripper_orientation_penalty` (jaw_z
+    vs palm_z only):
+        The Z-only formula returns 0 in BOTH top-down (jaw below palm in
+        z) AND horizontal (jaw beside palm at same z). PPO can converge
+        to either with equal preference. V2.14 visual replay confirmed
+        the policy chose snake/horizontal — gripper extended forward
+        skimming the table, jaws beside the cube laterally.
+        The direction formula here distinguishes them : top-down → 0,
+        horizontal → 1, up → 2. Only top-down avoids the penalty.
+
+    Verified at home pose via dump_scene_frames (2026-05-11) :
+        palm = (0.3294, -0.3625, 0.2769), jaw = (0.3306, -0.2691, 0.2761).
+        delta = (0.0012, +0.0934, -0.0008), delta_norm.z ≈ -0.009.
+        Return ≈ 1.0 (horizontal as expected at home — gripper extends
+        forward in +y direction, almost parallel to table).
+    """
+    ee_frame = env.scene[ee_frame_cfg.name]
+    palm = ee_frame.data.target_pos_w[..., 0, :]
+    jaw = ee_frame.data.target_pos_w[..., 1, :]
+    delta = jaw - palm
+    # Normalize. Add small epsilon to avoid div-by-zero in the degenerate
+    # case where palm and jaw coincide exactly (physically impossible).
+    delta_norm = delta / (torch.norm(delta, dim=-1, keepdim=True) + 1e-6)
+    # delta_norm.z ∈ [-1, +1]. Top-down: jaw is below palm → delta.z < 0 →
+    # delta_norm.z = -1 → return 0. Horizontal: delta.z = 0 → return 1.
+    # Gripper-up: delta.z > 0 → delta_norm.z = +1 → return 2.
+    return 1.0 + delta_norm[..., 2]
+
+
+def jaw_below_cube_penalty(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    cube_half_size: float = 0.010,
+) -> torch.Tensor:
+    """V2.15 — Penalty when jaw goes BELOW the cube's bottom (= into table).
+
+    Live cube position is used so the threshold adapts as the cube is
+    lifted: when the cube is on the table (z=0.041), the threshold is
+    0.031 (table top). When the cube is lifted to z=0.20, the threshold
+    becomes 0.19 (no false positive during transport).
+
+    Returns:
+        0.0 when jaw_z ≥ cube_bottom (= cube_z - cube_half_size).
+        positive (in meters) when jaw is below cube_bottom — equal to
+        how far below the cube's bottom face the jaw has gone.
+
+    Typical values with weight=-50 (V2.15):
+        jaw at cube top (0.051m) :        0   → 0 penalty (grasp height OK)
+        jaw at cube center (0.041m):      0   → 0 (touching cube OK)
+        jaw at cube bottom (0.031m):      0   → 0 (table level, tolerated)
+        jaw 5 mm below bottom (0.026m):   0.005 → -0.25/step (warning zone)
+        jaw 1 cm below bottom (0.021m):   0.010 → -0.50/step (clear breach)
+        jaw 2 cm below bottom (0.011m):   0.020 → -1.00/step (deep in table)
+
+    Calibration of ``weight=-50`` (V2.15):
+        Empirical V2.14 model_100: min jaw_z = +0.042m (1.1cm above
+        cube_bottom 0.031m). No penalty fires on current behavior.
+        Empirical V2.13 v3 model_100: min jaw_z = +0.010m (2.1cm BELOW
+        cube_bottom). With weight -50, this would have cost ~30/ep,
+        deterring the physics-breach behavior.
+
+    Cube half size 0.010 = 1 cm (cube is 2 cm side, root_pos_w is center).
+    No threshold tuning needed across scene rescales — formula reads the
+    live cube state.
+    """
+    cube = env.scene[cube_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+    cube_z = cube.data.root_pos_w[..., 2]
+    jaw_z = ee_frame.data.target_pos_w[..., 1, 2]
+    cube_bottom = cube_z - cube_half_size
+    return torch.clamp(cube_bottom - jaw_z, min=0.0)
+
+
 def cube_dropped_float(
     env: ManagerBasedRLEnv,
     world_z_threshold: float = 0.04,

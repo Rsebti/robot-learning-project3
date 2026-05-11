@@ -940,3 +940,246 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+
+# v18 — V2.13: V2.12 + action clip + posture penalties to force top-down grasp.
+# Diagnostic V2.12 showed action saturation (raw actions ±6 vs expected ±1)
+# and snake/scoop motor program (gripper pointing UP at grasp, jaw scraping
+# table). V2.13 fixes both with: clip={".*": (-1.0, 1.0)} on action class
+# (real vmax cap 6 rad/s), gripper_orientation_penalty (-1.0 weight, no
+# free hover bonus), scoop_grasp_penalty (-10.0 weight, geometric
+# constraint wrist_z >= ee_z). All other V2.12 reward shaping preserved.
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V213-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV213"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V213-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV213_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V213-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV213"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V213-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV213_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+
+# V2.13 v3 — sign-bug fix on gripper_orientation_penalty +
+# reach landscape overhaul. Same PPO config as V213 (env-side changes only).
+# See `leisaac_lift_env_cfg.py::LeIsaacLiftCubeRLEnvCfgV213v3` for rationale.
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V213v3-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV213v3"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V213v3-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV213v3_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V213v3-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV213v3"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V213v3-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV213v3_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+
+# V2.14 — V2.13 v3 + 10s episodes + arm_action.scale=0.10 (vmax 3 rad/s) +
+# joint_vel & action_rate ×10 to kill V213v3's Bang-Bang vertical smash.
+# Same PPO config (env-side changes only).
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V214-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV214"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V214-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV214_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V214-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV214"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V214-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV214_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+
+# V2.15 — V2.14 + strict-top-down via palm→jaw direction + jaw_below_cube_penalty
+# Same PPO config (env-side reward changes only).
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V215-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV215"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V215-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV215_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V215-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV215"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V215-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV215_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_13:LiftCubePPORunnerCfgV213"
+        ),
+    },
+    disable_env_checker=True,
+)

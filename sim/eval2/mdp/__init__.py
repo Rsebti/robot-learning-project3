@@ -23,7 +23,11 @@ from .rewards import (
     cube_lifted_and_grasped,
     cube_to_goal_distance_above_base,
     cube_to_goal_distance_grasped_and_lifted,
+    gripper_orientation_penalty,                     # V2.13 posture penalty (jaw-vs-palm Z)
+    gripper_pointing_direction_penalty,              # V2.15 posture penalty (palm→jaw direction)
+    jaw_below_cube_penalty,                          # V2.15 physics-breach prevention
     object_ee_distance_l2,                           # V2.10c linear distance penalty
+    scoop_grasp_penalty,                             # V2.13 geometric anti-scoop
 )
 from .terminations import cube_dropped, cube_reached_goal, ee_far_from_cube
 
@@ -41,7 +45,11 @@ __all__ = [
     "cube_to_goal_vector",                           # V2.12 relative vector obs
     "ee_far_from_cube",                              # V2.12 wandering cutoff DoneTerm
     "ee_to_cube_vector",                             # V2.12 relative vector obs
+    "gripper_orientation_penalty",                   # V2.13 posture penalty (jaw-vs-palm Z)
+    "gripper_pointing_direction_penalty",            # V2.15 posture penalty (palm→jaw direction)
+    "jaw_below_cube_penalty",                        # V2.15 physics-breach prevention
     "object_ee_distance_l2",                         # V2.10c linear distance penalty
+    "scoop_grasp_penalty",                           # V2.13 geometric anti-scoop
     "target_color_zero",                             # V2.10 Phase C placeholder
     "wrist_image_features",
 ]

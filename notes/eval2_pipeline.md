@@ -17,8 +17,8 @@
 
 ```
 Phase A (~10h)        smoke test state-only lift              [VALIDÉ ✓]
-Phase B (~22h/run)    wrist cam + ResNet, 14 variantes PPO    [EN COURS — V2.11 v3]
-Phase C (~1 semaine)  Eval 2 par curriculum (5-6 paliers, 6 couleurs)
+Phase B (~22h/run)    wrist cam + ResNet, 18 variantes PPO    [EN COURS — V2.13]
+Phase C (~1 semaine)  Eval 1 (cube + bowl) puis Eval 2 (multi-cubes + color)
 Phase D (~1-2 jours)  deploy SO-101 réel + 5 rollouts TA
 ```
 
@@ -26,7 +26,7 @@ Estimation totale : ~10-15 jours de travail réel + ~5-10h GPU (~$30-80 Brev si 
 
 ---
 
-## 🔄 ÉTAT POUR REPRISE (2026-05-10, V2.12) — LIS CETTE SECTION EN PREMIER
+## 🔄 ÉTAT POUR REPRISE (2026-05-11, V2.13) — LIS CETTE SECTION EN PREMIER
 
 > Cette section est le handoff complet de l'état actuel après ~3 jours de
 > debugging itératif sur Phase B. Si tu reprends ce projet (humain ou LLM),
@@ -35,10 +35,17 @@ Estimation totale : ~10-15 jours de travail réel + ~5-10h GPU (~$30-80 Brev si 
 
 ### Où on en est
 
-- **Variant actif** : **V2.12** (cold-start, à lancer par user). Logs cibles : `logs/rsl_rl/lift_v2_12/<nouveau-timestamp>/`. V2.12 = V2.9 reward+PPO + **DELTA action control** (le vrai fix qu'on cherchait). Tous les runs V2.10 → V2.11 v1/v2/v3 restent en archive.
-- **Tâche** : LeIsaac SO-101 lift cube, **état + wrist cam ResNet18 features + relative vectors (obs_dim=555)**, **`RelativeJointPositionActionCfg(scale=0.20)`** = vmax mécanique 6 rad/s, V2.9 reward shaping (grasp+lift gating), V2.9 PPO config (init_noise=1.0, entropy=0.005), + linear distance penalty -1.0.
-- **Phase A validée** depuis 2026-05-08 (state-only PPO sur LeIsaac, Phase B = ajout wrist cam).
-- **Phase C/D pas démarrées**. Phase C nécessite Phase B fonctionnel (≥30% success deterministic).
+- **Variant actif** : **V2.15** (à lancer en cold-start). V2.14 + strict-top-down enforcement : rewrite `gripper_orientation_penalty` avec **palm→jaw direction** (catche horizontal/snake) + new `jaw_below_cube_penalty` (anti physics breach). Logs cibles : `logs/rsl_rl/lift_v2_13/<nouveau-timestamp>/`.
+- **V2.14 résultat (mixed)** : à iter 100, Bang-Bang smash KILLED (max qdot 27→5 rad/s, tip below table 31%→0%), grasps plus sustained (147 steps mean). MAIS visual replay confirme **SNAKE/HORIZONTAL** : shoulder_lift +0.97 + wrist_flex +0.87 → bras extends low forward, jaws skim table at jaw_z=0.05m, approche cube latéralement. 98% steps en table-sliding, 0% LIFTING. Cause : `gripper_orientation_penalty` jaw-vs-palm-Z returns 0 en top-down ET en horizontal — policy a convergé sur horizontal par exploration luck. V2.15 corrige avec formule palm→jaw direction (catche snake).
+- **V2.13 v3 résultat (partial success)** : à iter 100, **50% phase GRASPED** (vs 0% V213v2) → sign-fix orient fonctionne, policy fait top-down, gripper-down sustained. MAIS Bang-Bang smash exploit : max |qdot| 75 rad/s (12× Feetech limit), table sliding 98%, time-to-first-grasp 0.33s, tip below table 31%, 0 lift. V214 a corrigé le smash.
+- **V2.13 v2 résultat (échec)** : crashé iter 128 VF blow-up. Surtout : **bug de SIGN dans `gripper_orientation_penalty`** — formule quat `1 + z_world.z` supposait local +z = direction des doigts, mais sur SO-101 local +z du frame "gripper" pointe VERS L'ARRIÈRE (confirmé `dump_scene_frames`). Récompensait gripper-UP. Convergé sur pose `shoulder_lift +1.745 max + wrist_flex -1.658 min + jaws UP, EE hover 17cm above cube`. 0% grasp.
+- **V2.13 v1 résultat (échec)** : give-up exploit à iter 0-50. 88% épisodes terminaient via `ee_far_from_cube` DoneTerm sans penalty associée. V2 a fixé v1.
+- **V2.13 v2 fixes (4 changements)** : (1) REMOVE `ee_far_from_cube` DoneTerm (kill l'exploit channel), (2) `cube_dropped_penalty` -150→-30 (encore strong mais moins brutal), (3) `scoop_grasp_penalty` -10→-5 (allègement), (4) `reaching_object` weight +1.0→+1.5 (boost positif pour rendre baseline non-négative). gripper_orientation_penalty reste à -1.0.
+- **V2.12 résultat** : a tourné jusqu'iter 1000+, **converged on snake/scoop motor program** : grasp duration 86 steps (sustained), lifting démarrant à iter 300+, mais **pas de success** (cube éjecté en transport 60% du temps), gripper pointing UP at grasp (-0.27 score), jaw scraping table (5cm). Action saturation extreme (raw actions ±6 vs expected ±1 → vmax peak 21 rad/s vs Feetech limit 6 rad/s). Sim-to-real impossible. → V2.13 fixe ces deux pathologies.
+- **Tâche** : même que V2.12 (LeIsaac SO-101 lift cube to goal pose, 555D obs, V2.9 reward + V2.9 PPO + DELTA action). V2.13 ajoute 3 fixes pour forcer top-down arc trajectory + bornes vmax réelles.
+- **Stratégie globale** (validée user 2026-05-10) : V2.13 valide les fixes posture/speed sur la même task que V2.12. Si OK → Eval 1 (cube + bowl) en V2.14 (warmstart V2.13). Si Eval 1 ≥ 30% success → Eval 2 (multi-cubes + target_color).
+- **Phase A validée** depuis 2026-05-08.
+- **Phase C/D pas démarrées**. Phase C nécessite Phase B fonctionnel (≥30% success deterministic, posture humaine).
 
 ### Les 5 insights critiques apprises à la dure (ne pas oublier)
 
@@ -93,7 +100,208 @@ Pourquoi ça marche : tanh(d/0.15) sature à d > 60cm, donnant 0 gradient à gra
 
 Notre scène LeIsaac a la table à `world_z ≈ 0.0415` (table élevée). Donc `world_z_threshold = 0.04` = "cube juste sous la table top" = "cube tombé". L'équivalent Isaac Lab Lift d'un threshold `-0.05` (où la table est à z=0) est notre `0.04`. Ne pas confondre les deux scènes.
 
-### Stack V2.12 (config actuelle)
+### Stack V2.15 (config actuelle, "Strict Top-Down")
+
+**Diff vs V2.14** (2 changements env-side, PPO unchanged) :
+
+1. **REPLACE `gripper_orientation_penalty` function** : passe de `gripper_orientation_penalty` (jaw-vs-palm Z, retournait 0 en top-down ET horizontal) à `gripper_pointing_direction_penalty` (palm→jaw direction normalized). Weight inchangé **-5.0**.
+   - Top-down (jaw below palm) → return 0 (pas de penalty)
+   - Horizontal/snake (jaw beside palm) → return 1 → -5/step penalty ⚡
+   - Gripper-UP (jaw above palm) → return 2 → -10/step penalty
+   - Formule basée sur **direction du vecteur palm→jaw en monde** : unambiguë, no quat math, no local axis ambiguity.
+
+2. **ADD `jaw_below_cube_penalty`** (NEW), weight **-50.0**.
+   - Returns `clamp(cube_bottom - jaw_z, min=0)` où `cube_bottom = cube_z - 0.010` (live cube z, adaptatif au lift)
+   - Fire only if jaw passe sous le cube physiquement (= dans la table)
+   - V2.14 min jaw_z = 0.042 vs cube_bottom 0.031 → no fire actuellement (safety net)
+
+**Dimensions empiriques vérifiées** (depuis `dump_scene_frames` 2026-05-11) :
+- `cube.root_pos_w.z` (center) = **0.0410m** constant au reset
+- `cube_half_size` = **0.0100m** (USD bbox)
+- `cube_bottom_z` = **0.0310m**, `cube_top_z` = **0.0510m**
+- home pose : palm = jaw = +0.2769m (gripper extends forward, parallèle table) → return ≈ 1.0 (horizontal, attendu)
+- top-down idéal : palm 5cm above jaw → delta_norm.z = -1 → return = 0 ✓
+- snake horizontal : palm-jaw beside, delta_norm.z ≈ 0 → return = 1 → -5/step ✓
+
+**Reward shaping V2.15** ([`leisaac_lift_env_cfg.py::RewardsCfgV215`](../sim/eval2/leisaac_lift_env_cfg.py)) :
+
+| terme | weight V2.15 | gating | rôle |
+|---|---|---|---|
+| `reaching_object` (tanh +3) | +3.0 | none | anti-suicide insurance |
+| `grasping_cube` (binary) | +5.0 | none | intermediate grasp signal |
+| `lifting_object` | +10.0 | grasp ∧ lift | anti-flick (V2.7) |
+| `object_goal_tracking` | +16.0 | grasp ∧ lift | anti-flick |
+| `object_goal_tracking_fine_grained` | +5.0 | grasp ∧ lift | precision final |
+| `success_bonus` | +2500 | terminal | massive terminal incentive |
+| `ee_to_cube_distance` | -3.0 | none | non-saturating driver |
+| `action_rate_l2` | -1e-3 | n/a | smoothness V214 ×10 |
+| `joint_vel_l2` | -1e-3 | n/a | smoothness V214 ×10 |
+| `cube_dropped_penalty` | -30 | n/a | discourage suicide |
+| **`gripper_orientation_penalty` (palm→jaw direction)** ⭐ V215 | -5.0 | none | **catche top-down ET horizontal/snake** |
+| **`jaw_below_cube_penalty`** ⭐ V215 NEW | -50.0 | n/a | physics breach prevention |
+| `scoop_grasp_penalty` | 0 (dropped V213v3) | none | redundant |
+
+**Action / Episode / PPO** : héritage V2.14 (scale 0.10, episode 10s, smoothness ×10, PPO V213).
+
+**Cold-start REQUIS** : V214 model_100 a internalisé le snake mode.
+
+### Stack V2.14 (legacy, snake-mode local optimum)
+
+**Diff vs V2.13 v3** (4 changements env-side, PPO unchanged) :
+
+1. **`episode_length_s`** : 5.0 → **10.0s** (300 steps à 30 Hz). Aligné teleop pacing.
+2. **`arm_action.scale`** : 0.20 → **0.10** dans `RelativeJointPositionActionCfg`. HARD speed cap : vmax = 0.10 / (1/30s) = 3 rad/s = 50% de Feetech (6 rad/s). Sim2real ultra safe.
+3. **`joint_vel_l2`** : -1e-4 → **-1e-3** (×10). Soft smoothness penalty backup.
+4. **`action_rate_l2`** : -1e-4 → **-1e-3** (×10). Discourage Δaction saccades.
+
+Tout le reste hérité de V2.13 v3 :
+- `reaching_object = +3.0` (anti-suicide)
+- `ee_to_cube_distance = -3.0` (linear driver)
+- `gripper_orientation_penalty = -5.0` (formule jaw-vs-palm, sign-fixed)
+- `scoop_grasp_penalty = 0.0` (dropped, redundant)
+- `cube_dropped_penalty = -30.0`
+- `success_bonus = +2500`
+- Pas de `ee_far_from_cube` DoneTerm
+- Action clip `[-1, +1]`
+
+**Reward shaping V2.14** ([`leisaac_lift_env_cfg.py::RewardsCfgV214`](../sim/eval2/leisaac_lift_env_cfg.py)) :
+
+| terme | weight V2.14 | gating | rôle |
+|---|---|---|---|
+| `reaching_object` (tanh, std=0.15) | +3.0 | none | anti-suicide insurance + proximity bonus |
+| `grasping_cube` (binary) | +5.0 | none | intermediate grasp signal |
+| `lifting_object` | +10.0 | grasp ∧ lift | anti-flick (V2.7) |
+| `object_goal_tracking` (std=0.3) | +16.0 | grasp ∧ lift | anti-flick |
+| `object_goal_tracking_fine_grained` (std=0.05) | +5.0 | grasp ∧ lift | precision final |
+| `success_bonus` (sparse) | +2500 | terminal | massive terminal incentive |
+| `ee_to_cube_distance` (linéaire) | -3.0 | none | non-saturating driver |
+| `action_rate_l2` | **-1e-3** ⭐ V214 ×10 | n/a | discourage saccades |
+| `joint_vel_l2` | **-1e-3** ⭐ V214 ×10 | n/a | soft speed penalty |
+| `cube_dropped_penalty` | -30 | n/a | discourage drop-suicide |
+| `gripper_orientation_penalty` (jaw-vs-palm Z) | -5.0 | none | force top-down posture |
+| `scoop_grasp_penalty` | 0 (dropped) | none | redundant in V213v3+ |
+
+**Action — DELTA + clip + scale 0.10** :
+- `RelativeJointPositionActionCfg(scale=0.10, use_zero_offset=True, clip={".*": (-1.0, 1.0)})`
+- vmax = 0.10 / (1/30s) = **3 rad/s** (Feetech-aligned, 50% safety margin)
+
+**Episode** : `episode_length_s = 10.0` (300 steps).
+
+**Cold-start REQUIS** : V213v3 model_100 a internalisé le Bang-Bang smash, irrécupérable.
+
+### Stack V2.13 v3 (legacy, Bang-Bang smash exploit)
+
+**Diff vs V2.13 v2** (4 changements env-side, PPO unchanged) :
+
+1. **`gripper_orientation_penalty` réécrite** dans [`sim/eval2/mdp/rewards.py`](../sim/eval2/mdp/rewards.py). Formule basée sur **positions Z** (palm vs jaw), pas quaternion. Returns `clamp((jaw_z - palm_z) / 0.05, min=0)`. Unambiguë : 0 quand top-down, ~1 quand fully UP. Weight = **-5.0** (vs -1.0 en v2).
+2. **`scoop_grasp_penalty` DROPPED** (weight 0). Random rollout a prouvé qu'il fire 0% en pose gripper-down — redondant avec la nouvelle orientation penalty.
+3. **`reaching_object` tanh BOOSTED** (weight 1.5 → **+3.0**, NOT dropped). Anti-suicide insurance : sans signal positif, l'environnement devient "all-stick no carrot" et la math donne suicide-by-drop comme strategy optimale (cost -94 vs timeout -483). À +3.0, le bonus de proximité tanh donne +1.89/step net près du cube → stay-near domine suicide (+283 vs -94). Le sign-fixed orient penalty (-5) empêche le hover-at-elevation de V2.13 v2 car gripper-up coûte trop.
+4. **`ee_to_cube_distance` BOOSTED** (weight -1.0 → **-3.0**). Driver linéaire principal pour la descente verticale (tanh sature, linéaire non).
+
+**Reward shaping V2.13 v3** ([`leisaac_lift_env_cfg.py::RewardsCfgV213v3`](../sim/eval2/leisaac_lift_env_cfg.py)) :
+
+| terme | weight | gating | rôle V2.13 v3 |
+|---|---|---|---|
+| `reaching_object` (tanh, std=0.15) | **+3.0** ⭐ BOOST | none | anti-suicide insurance + bonus proximité |
+| `grasping_cube` (binary) | +5.0 | none | bonus intermédiaire (inchangé) |
+| `lifting_object` | +10.0 | grasp ∧ lift | inchangé |
+| `object_goal_tracking` | +16.0 | grasp ∧ lift | inchangé |
+| `object_goal_tracking_fine_grained` | +5.0 | grasp ∧ lift | inchangé |
+| `success_bonus` | +2500 | terminal | inchangé |
+| `ee_to_cube_distance` (linéaire) | **-3.0** ⭐ BOOST | none | driver principal descente |
+| `action_rate_l2` / `joint_vel_l2` | -1e-4 each | n/a | smoothness Isaac Lab default |
+| `cube_dropped_penalty` | -30 | n/a | inchangé |
+| `gripper_orientation_penalty` (jaw vs palm Z, V213v3) | **-5.0** ⭐ FIX SIGN | none | force top-down posture (formule réécrite) |
+| `scoop_grasp_penalty` | **0** ⭐ DROP | none | redundant |
+
+**Termination, Action, PPO config** : identiques à V2.13 v2 (cf section ci-dessous).
+
+**Cold-start REQUIS** : model_100 a internalisé la pose gripper-UP (récompensée à tort par v2). Resume = relancer dans le même local opt avec un reward landscape différent.
+
+### Stack V2.13 v2 (legacy, sign-bug détecté post-mortem)
+
+**Reward shaping** ([sim/eval2/leisaac_lift_env_cfg.py](../sim/eval2/leisaac_lift_env_cfg.py) `RewardsCfgV213`) — V2.12 + 5 changements (V2.13 v1 → v2 calibration) :
+
+| terme | weight | gating | source |
+|---|---|---|---|
+| `reaching_object` (tanh, std=0.15) | **+1.5** ⭐ V2.13 v2 | none | boost positif (V2.13 v2, était 1.0) |
+| `grasping_cube` (binary, jaw<4cm + grip<0.26) | +5.0 | none | LeIsaac obs |
+| `lifting_object` | +10.0 | `grasp ∧ lift` (z_rel > 0.08) | V2.7 anti-flick |
+| `object_goal_tracking` (std=0.3) | +16.0 | `grasp ∧ lift` | V2.7 anti-flick |
+| `object_goal_tracking_fine_grained` (std=0.05) | +5.0 | `grasp ∧ lift` | V2.7 anti-flick |
+| `success_bonus` (sparse, on cube_reached_goal) | +2500 | terminal | V2.12 |
+| `ee_to_cube_distance` (linéaire raw d, V2.10c) | -1.0 | none | bootstrap exploration |
+| `action_rate_l2` | -1e-4 | n/a | Isaac Lab default |
+| `joint_vel_l2` | -1e-4 | n/a | Isaac Lab default |
+| `joint_acc_l2` | 0 (drop) | n/a | absent du Lift task |
+| `cube_dropped_penalty` (binary, world_z<0.04) | **-30** ⭐ V2.13 v2 | n/a | de -150 v1 → -30 v2 (less crippling) |
+| `gripper_orientation_penalty` | -1.0 | none | force top-down posture (kept) |
+| `scoop_grasp_penalty` | **-5.0** ⭐ V2.13 v2 | none | de -10 v1 → -5 v2 (less brutal) |
+
+**Termination** :
+- `time_out` (5s = 150 steps)
+- `cube_reached_goal` (success, 3D dist <5cm)
+- `cube_dropped` (world_z<0.04m)
+- ~~`ee_far_from_cube`~~ ⭐ V2.13 v2 **REMOVED** — give-up exploit channel (V2.13 v1 policy a appris à wander out pour terminer tôt)
+
+**Action — DELTA control + clip** (V2.12 + V2.13 fix) :
+- Class : `RelativeJointPositionActionCfg`
+- `scale = 0.20`, `use_zero_offset = True`, **`clip = {".*": (-1.0, 1.0)}`** ⭐ V2.13
+- vmax mécanique RÉELLEMENT garanti = 0.20 / (1/30s) = **6.0 rad/s** (limite Feetech STS3215)
+- En V2.12 sans clip, raw actions saturaient à ±6 → vmax peak 21 rad/s (sim-to-real impossible). Clip V2.13 résout ça.
+- Joints : `[shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll]`
+- gripper : `BinaryJointPositionActionCfg` (open=0.5, close=0.0)
+
+**Observations — 555D** (héritage V2.12) :
+```
+joint_pos              ( 6D)
+joint_vel              ( 6D)
+object_position        ( 3D, cube en root frame)
+target_object_position ( 7D, goal pose en root frame)
+last_action            ( 6D)
+wrist_features         (512D, ResNet)
+target_color_zero      ( 6D, Phase C placeholder)
+bowl_xyz_zero          ( 3D, Phase C placeholder)
+ee_to_cube_vec         ( 3D, V2.12 - world frame)
+cube_to_goal_vec       ( 3D, V2.12 - world frame)
+─────────────────────
+total = 555D
+```
+
+**Termination** (héritage V2.12) :
+- `time_out` (5s = 150 steps)
+- `cube_reached_goal` (success, 3D dist <5cm)
+- `cube_dropped` (world_z<0.04m)
+- `ee_far_from_cube` (||EE - cube|| > 0.5m, V2.12 fail-fast)
+
+**Misc** (héritage V2.10) :
+- Cube spawn pose_range : `x±7.5cm, y±7.5cm, yaw±30°` (LeIsaac stock)
+- Cube taille : 2cm (USD `xformOp:scale=2/3`)
+- Table couleur : #B8ADA9 (USD PreviewSurface override)
+- Phase C placeholders activés (target_color 6D + bowl_xyz 3D)
+- Robot body chain : `base → shoulder → upper_arm → lower_arm → wrist → gripper → jaw` (confirmé via `dump_body_names.py`)
+- Ee_frame target indices : [0]=ee/palm (gripper), [1]=jaw
+
+**PPO config** ([sim/eval2/agents/rsl_rl_ppo_cfg_v2_13.py](../sim/eval2/agents/rsl_rl_ppo_cfg_v2_13.py) `LiftCubePPORunnerCfgV213`) — clone V2.12 = V2.9 :
+- `init_noise_std = 1.0` (V2.9 default, exploration large)
+- `entropy_coef = 0.005`
+- `value_loss_coef = 1.0`, `n_epochs = 5`, `n_mini_batches = 4`
+- `LR = 1e-3`, `schedule = adaptive`, `desired_kl = 0.02` (V2.12 fix)
+- `gamma = 0.99`, `lam = 0.95`, `max_grad_norm = 1.0`
+- `actor_hidden_dims = [256, 128, 128]`
+- `experiment_name = "lift_v2_13"`
+
+---
+
+### Stack V2.12 (legacy, model_900 entraîné)
+
+`RewardsCfgV212`. Same as V2.13 but :
+- pas de `gripper_orientation_penalty`
+- pas de `scoop_grasp_penalty`
+- `cube_dropped_penalty = -50`
+- pas de `clip` sur action class
+
+→ Permettait yeet (action saturation) et snake/scoop (no posture pressure). V2.13 corrige.
 
 **Reward shaping** ([sim/eval2/leisaac_lift_env_cfg.py](../sim/eval2/leisaac_lift_env_cfg.py) `RewardsCfgV212`) — V2.9 + 3 modifications :
 
@@ -153,52 +361,185 @@ Pourquoi : MLP `[256,128,128]` doit normalement apprendre la soustraction `cube 
 - `actor_hidden_dims = [256, 128, 128]`
 - `experiment_name = "lift_v2_12"`
 
-### Commandes cheat-sheet (PowerShell)
+### Commandes cheat-sheet (PowerShell) — VALIDÉES 2026-05-11
 
-**Train V2.12 (cold-start) :**
+> **Notes IMPORTANTES** :
+> - Toutes les commandes se lancent depuis **`C:\Users\user\Desktop\MA2\robot-learning-project3`** (le repo).
+> - Pas besoin d'activer le venv ni de `cd` dans `isaac_so_arm101` — on appelle directement le **python.exe absolu** du venv `isaac_so_arm101/.venv`.
+> - Pour les tasks `Visual-*`, **`--enable_cameras` est OBLIGATOIRE** sinon Isaac Lab crash avec `RuntimeError: A camera was spawned without --enable_cameras`. Pour `RL-*` (state-only) il n'est pas nécessaire.
+> - Les logs vont dans **`C:\Users\user\Desktop\MA2\robot-learning-project3\logs\rsl_rl\lift_v2_13\<timestamp>\`** (NOT dans `isaac_so_arm101\logs\` — ce path est l'ancien, abandonné dès V2.13).
+> - `$env:RUST_LOG = "error"` mute les warnings wgpu/Vulkan spammy quand `--display_data=true` ou cameras actives.
+
+**Train V2.15 (cold-start, CURRENT) — terminal 1** :
 ```powershell
-cd C:\Users\user\Desktop\MA2\isaac\isaac_so_arm101
-.\.venv\Scripts\Activate.ps1
-python -m sim.eval2.scripts.train `
-  --task Isaac-LeIsaac-SO101-Lift-Visual-V212-v0 `
-  --headless --enable_cameras
+cd C:\Users\user\Desktop\MA2\robot-learning-project3
+$env:RUST_LOG = "error"
+C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
+  sim/eval2/scripts/train.py `
+  --task Isaac-LeIsaac-SO101-Lift-Visual-V215-v0 `
+  --headless --enable_cameras --num_envs 256
+```
+ETA ~14-19h pour 1500 iter sur RTX 5070 (same shape as V214).
+
+**Resume V214 depuis un checkpoint** (si arrêté en cours) :
+```powershell
+... sim/eval2/scripts/train.py --task Isaac-LeIsaac-SO101-Lift-Visual-V214-v0 `
+  --headless --enable_cameras --num_envs 256 `
+  agent.resume=true agent.load_run=<timestamp> agent.load_checkpoint=model_N.pt
 ```
 
-**Monitor TB metrics (autre terminal) :**
+**Legacy archives (NE PAS relancer)** :
+- V2.14 : snake-mode (gripper horizontal, jaws slide table, 0 lift) — fix sign OK mais Z-only penalty laisse passer horizontal
+- V2.13 v3 : Bang-Bang smash (jaws crash table, 75 rad/s, 0 lift)
+- V2.13 v2 : sign-bug `gripper_orientation_penalty`, converged gripper-UP
+- V2.13 v1 : give-up exploit via `ee_far_from_cube` DoneTerm
+
+**Monitor TB metrics (terminal 2)** :
 ```powershell
-python -m sim.eval2.scripts.monitor_training --experiment lift_v2_12
+cd C:\Users\user\Desktop\MA2\robot-learning-project3
+C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
+  -m sim.eval2.scripts.monitor_training `
+  --experiment lift_v2_13 --interval 30
+```
+Le script auto-détecte le LOG_ROOT (project repo `logs/rsl_rl/` en priorité, fallback sur `isaac_so_arm101/logs/`). Affiche `[INFO] Log root: ...` au démarrage pour confirmer.
+
+Pour pinner un run précis (utile si plusieurs runs cohabitent dans `lift_v2_13/`) :
+```powershell
+... -m sim.eval2.scripts.monitor_training --experiment lift_v2_13 --run 2026-05-11_01-01-00 --interval 30
 ```
 
-**Play visuel (regarder la policy d'un checkpoint) :**
+**TensorBoard graphique (terminal 3)** :
 ```powershell
-python -m sim.eval2.scripts.play `
-  --task Isaac-LeIsaac-SO101-Lift-Visual-V212-Play-v0 `
-  --num_envs 4 `
-  --enable_cameras `
-  --checkpoint "logs\rsl_rl\lift_v2_12\<timestamp>\model_<N>.pt"
+C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
+  -m tensorboard.main `
+  --logdir C:\Users\user\Desktop\MA2\robot-learning-project3\logs\rsl_rl\lift_v2_13 `
+  --port 6006
+```
+Puis `http://localhost:6006` dans le navigateur.
+
+**Play visuel (regarder la policy d'un checkpoint)** :
+```powershell
+cd C:\Users\user\Desktop\MA2\robot-learning-project3
+C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
+  sim/eval2/scripts/play.py `
+  --task Isaac-LeIsaac-SO101-Lift-Visual-V213-Play-v0 `
+  --num_envs 4 --enable_cameras `
+  --checkpoint "logs\rsl_rl\lift_v2_13\<timestamp>\model_<N>.pt"
 ```
 
-**Diagnostic complet d'un checkpoint** (action histogram, grasp lifecycle, reward decomposition, → écrit `play_logs/<task>_<datetime>.summary.txt`) :
+**Diagnostic complet d'un checkpoint** (action histogram, grasp lifecycle, reward decomposition, **posture/snake diagnostics V2.12+** → écrit `play_logs/<task>_<datetime>.summary.txt`) :
 ```powershell
-python -m sim.eval2.scripts.play_diagnose_v2 `
-  --task Isaac-LeIsaac-SO101-Lift-Visual-V212-Play-v0 `
+cd C:\Users\user\Desktop\MA2\robot-learning-project3
+C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
+  sim/eval2/scripts/play_diagnose_v2.py `
+  --task Isaac-LeIsaac-SO101-Lift-Visual-V213-Play-v0 `
   --num_envs 4 --num_episodes 16 `
   --headless --enable_cameras `
-  --checkpoint "logs\rsl_rl\lift_v2_12\<timestamp>\model_<N>.pt"
+  --checkpoint "logs\rsl_rl\lift_v2_13\<timestamp>\model_<N>.pt"
 ```
+
+**Dump TB scalars en markdown (consumable par autre LLM)** :
+```powershell
+cd C:\Users\user\Desktop\MA2\robot-learning-project3
+C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
+  sim/eval2/scripts/dump_tb_v212.py    # auto-détecte le run V2.12
+# Pour V2.13, à modifier ou créer `dump_tb_v213.py` (cf. dump_tb_v212.py comme template)
+```
+
+**Vérifier qu'un run est bien V2.13 v2 (pas v1)** — inspecte `params/env.yaml` :
+```powershell
+Get-Content C:\Users\user\Desktop\MA2\robot-learning-project3\logs\rsl_rl\lift_v2_13\<timestamp>\params\env.yaml | Select-String "weight: -150|weight: -30|ee_far_from_cube"
+```
+- V2.13 **v1** : `weight: -150` (drop), `weight: -10` (scoop), `ee_far_from_cube` PRÉSENT
+- V2.13 **v2** : `weight: -30` (drop), `weight: -5` (scoop), `ee_far_from_cube` ABSENT (DoneTerm désactivée)
 
 **View scene seule (sans policy, pour vérifier randomisation cube)** :
 ```powershell
-python -m sim.eval2.scripts.view --task Isaac-LeIsaac-SO101-Lift-RL-V210-View-v0
+cd C:\Users\user\Desktop\MA2\robot-learning-project3
+C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
+  sim/eval2/scripts/view.py --task Isaac-LeIsaac-SO101-Lift-RL-V210-View-v0
 ```
 
 **Rebuild USD si scene.usd a été reset** (idempotent, garde des backups) :
 ```powershell
-python -m sim.eval2.scripts.resize_cube_usd      # cube 3cm → 2cm
-python -m sim.eval2.scripts.recolor_table_usd    # table → #B8ADA9
+cd C:\Users\user\Desktop\MA2\robot-learning-project3
+C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
+  sim/eval2/scripts/resize_cube_usd.py      # cube 3cm → 2cm
+C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
+  sim/eval2/scripts/recolor_table_usd.py    # table → #B8ADA9
 ```
 
-### Cibles V2.12 (pour valider que ça marche)
+**Vérifier l'implémentation V2.13 v2 sans lancer training (lourd, lance Isaac Sim ~30s)** :
+```powershell
+cd C:\Users\user\Desktop\MA2\robot-learning-project3
+C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
+  sim/eval2/scripts/verify_v213_v2.py --headless --enable_cameras
+```
+Affiche les poids des reward terms + termination state + PPO config résolus pour les 2 tasks (`RL-V213-v0` + `Visual-V213-v0`).
+
+### Cibles V2.13 v2 (pour valider que ça marche)
+
+V2.13 v2 vise à corriger 2 pathologies V2.12 (snake/scoop + action saturation) sans perdre la convergence, ET sans tomber dans le give-up exploit de v1.
+
+**Validé à iter 0-16 (cold-start observé 2026-05-11)** :
+- `Mean action noise std` stable autour 1.00 (vs v1 montait à 1.13) ✅
+- `Mean episode length` stable autour 144 steps (vs v1 collapsait à 18) ✅
+- `Mean reward` -1.03 → -0.87 (croît vers 0) ✅
+- `reaching_object` 0.04 → 0.39 (×9 monotone) ✅
+- `gripper_orientation_penalty` -0.21 → -0.15 (descend, policy oriente vers le bas) ✅
+- `Episode_Termination/ee_far_from_cube` ABSENT (DoneTerm bien désactivée) ✅
+
+**À iter 50-100 (à valider)** :
+- `Episode_Reward/gripper_orientation_penalty` descend vers ~-0.10 (cap théorique 0)
+- `Episode_Reward/scoop_grasp_penalty` plateau ou diminue (pas dépasser -0.5)
+- `Episode_Reward/cube_dropped_penalty` reste proche de 0 (drop rate <3%)
+- `reaching_object` ≥ 0.50
+- `mean_reward` devient positif
+
+**À iter 200-400** :
+- Premier `Episode_Reward/grasping_cube > 0.05` (sustained, pas du noise)
+- Premiers `Episode_Reward/lifting_object > 0`
+- noise_std descend vers 0.7-0.8
+
+**À iter 1000+** :
+- `Episode_Reward/success_bonus > 0.5` (premiers vrais success)
+- Au play_diagnose : `Mean gripper-down score` > 0.5 (vs V2.12 = +0.17), `Max |qdot| / ép` ≤ 7 rad/s, trajectoire top-down (pas snake)
+
+### 🔴 Drapeaux rouges à monitorer
+
+**Give-up via cube_dropped** :
+- Si `Episode_Termination/cube_dropped` > 5% sustained = policy déclenche drop pour échapper aux pénalités
+- Mitigation : `cube_dropped_penalty` -30 (v2) → -50 ou -100. Configurable dans `LeIsaacLiftCubeRLEnvCfgV213.__post_init__`.
+
+**Give-up via wandering (sans DoneTerm)** :
+- Comme `ee_far_from_cube` est désactivée en v2, le policy ne peut PLUS terminer tôt en s'éloignant — l'épisode tournera toujours 150 steps. Mais si elle se met à errer loin du cube (`reaching_object` chute après une période de hausse) c'est qu'elle a perdu le signal.
+- Mitigation : booster `reaching_object` weight 1.5 → 2.0, ou augmenter `ee_to_cube_distance` weight -1.0 → -2.0.
+
+**Scoop persistant ("payer l'amende")** :
+- Si `Episode_Reward/scoop_grasp_penalty` plateau à <-1.0/ép sustained = policy "mange l'amende" et fait quand même scoop
+- Observé v2 iter 0-16 : -0.25/ép, monte progressivement → à surveiller. Si > -1.0 à iter 100, bumper weight de -5 à -10.
+
+**Orientation pas down sustained** :
+- Si `Episode_Reward/gripper_orientation_penalty` plateau au-dessus de -0.5/ép sans descendre = policy ne corrige pas l'orientation
+- Mitigation : weight -1.0 → -2.0
+
+**Action saturation revient (sim-to-real risk)** :
+- Si au play_diagnose `Max |qdot| / ép` > 7 rad/s = clip cassé ou bypass quelque part
+- Mitigation : vérifier `arm_action.clip = {".*": (-1.0, 1.0)}` est bien appliqué, et que `RelativeJointPositionActionCfg(scale=0.20)` est utilisée (pas l'ABSOLUTE)
+
+**Action saturation revient** :
+- Si `action_sat_count` au play_diagnose > 30/150 = `clip` ne fait pas son boulot OU policy outputs sont sustained à ±1
+- Mitigation : vérifier que `clip={".*": (-1.0, 1.0)}` est bien dans le RelativeJointPositionActionCfg de V2.13 (ligne ~2000 de leisaac_lift_env_cfg.py)
+
+**Loss/value_function explose (>100 sustained)** :
+- Reward exploitation/loop bug dans une fonction custom
+- Mitigation : check les rewards individuels, identifier celui qui spike
+
+**mean_episode_length plafonne à 15-30 steps** :
+- Policy déclenche un DoneTerm précoce systématiquement (drop ou ee_far)
+- Mitigation : c'est le give-up exploit, voir ci-dessus
+
+### Cibles V2.12 (legacy, archive)
 
 V2.12 = V2.9 reward+PPO + delta action. V2.9 atteignait 30% success deterministic sur env 2cm. V2.12 devrait atteindre similaire ou mieux, avec mouvement smooth par construction (vmax mécanique 6 rad/s).
 
@@ -236,6 +577,12 @@ V2.12 = V2.9 reward+PPO + delta action. V2.9 atteignait 30% success deterministi
 | `JointPositionActionCfg` mode ABSOLU + scale petit | scale borne range, pas vitesse → arm bloqué (V2.11 v1) ou yeet possible (V2.9, V2.11 v2) | V2.9, V2.11 v1/v2 |
 | Warm-start V2.9 → smoothness fort | yeet motor program n'est pas un slow motor program lent → désapprend tout | V2.10 warm-start |
 | Lift-only gating (V2.11) | OK en théorie mais V2.9 grasp+lift est empiriquement prouvé converger, et avec delta control le predicate fire reliably | V2.11 v3 |
+| DoneTerm "fail-fast" SANS penalty associée (`ee_far_from_cube` V2.12-V2.13 v1) | crée un **give-up exploit** : si la baseline reward est négative à cold-start (penalties brutales), terminer tôt via le DoneTerm devient mieux que finir l'épisode → policy diverge en wandering. Soit on couple le DoneTerm à une penalty négative ≥ ce que la policy coûte en restant, soit on supprime le DoneTerm. V2.13 v2 supprime. | V2.13 v1 |
+| Reward function basée sur quaternion math sans vérifier les axes locaux du URDF (V2.13 v1/v2 `gripper_orientation_penalty`) | A causé sign-inversion sur SO-101 : le formule `1 + z_world.z` supposait que local +z = direction OUT des doigts, mais `dump_scene_frames` a révélé que local +z du frame "gripper" pointe BACKWARD (vers la base). Résultat : on a récompensé gripper-UP pendant 60+ iters. **Lesson** : pour orientation, préférer formule basée sur POSITIONS Z directement (jaw vs palm), pas quat math. V2.13 v3 utilise `clamp((jaw_z - palm_z) / 0.05, min=0)`. | V2.13 v1/v2 |
+| Reward landscape "all-stick no carrot" sans signal positif en zone d'approche | Si toutes les terms d'approche sont des penalties (ee_to_cube_distance + orient_penalty sans reach), la math PPO donne `suicide-by-drop > timeout` quand `cube_dropped_penalty` est < à la somme des penalties évitées en finissant tôt. Exemple V2.13 v3 calcul initial : cost timeout=-483/ép, cost suicide=-94/ép → la policy préfère pousser le cube hors table. **Fix** : toujours garder un signal POSITIF en zone proche (ex `reaching_object tanh +3.0`) pour rendre stay-near plus rentable que suicide. | V2.13 v3 design initial |
+| Reward landscape avec time-pressure forte sans speed cap → Bang-Bang vertical | Avec `ee_to_cube_distance` à -3.0 et action.scale 0.20 (vmax 6 rad/s), PPO trouve qu'il vaut mieux foncer plein pot vers le cube en 2-3 steps (coût total -10) que descendre lentement (coût -100+ sur 30 steps). Résultat : jaws smash sur la table à 75 rad/s, cube éjecté au choc, 0 lift. **Fix** : (a) `action.scale 0.20 → 0.10` (hard cap vmax 3 rad/s), (b) `episode_length_s 5 → 10` (lent OK), (c) `joint_vel_l2 & action_rate_l2 ×10` (soft penalty). V2.14 applique les 3. | V2.13 v3 |
+| Orientation penalty Z-only (`clamp((jaw_z - palm_z)/0.05, min=0)`) ne catche pas le snake horizontal | Returns 0 quand jaw BELOW palm en Z (top-down OK) MAIS aussi 0 quand jaw BESIDE palm at same z (snake horizontal). Deux optima zero-penalty cohabitent → PPO peut converger sur snake par exploration luck. V2.14 visual replay confirme : policy converged on snake/horizontal. **Fix** : utiliser la DIRECTION du vecteur palm→jaw normalisée (formula `1 + delta_norm.z`), pas la composante Z seulement. Catche top-down (=0), horizontal (=1), gripper-up (=2). V2.15 applique. | V2.14 |
+| Penalties brutales à cold-start (drop=-150, scoop=-10) sans positive reward strong proche | baseline `Σreward/ép` négative = -200/ép → policy préfère terminer plutôt que d'explorer → no-op + give-up. V2.13 v2 calibre : drop=-30, scoop=-5, ET boost reaching à +1.5 pour rendre baseline non-négative. | V2.13 v1 |
 
 ### Variants disponibles (gym registers)
 
@@ -252,7 +599,12 @@ v13  V2.10 (smoothness ×500, échec)
 v14  V2.10b (joint_acc ÷33, plateau 4%)
 v15  V2.10c (+ ee_to_cube_distance, marche mieux mais lent)
 v16  V2.11 v1/v2/v3 (action.scale=0.20/0.5/0.5, all failed)
-v17  V2.12 (V2.9 reward + DELTA action, vmax 6 rad/s mech) — CURRENT
+v17  V2.12 (V2.9 reward + DELTA action, vmax 6 rad/s mech, NO clip → snake/scoop, action sat) — model_900 trained
+v18  V2.13 v1 (V2.12 + clip + gripper_orientation_penalty=-1 + scoop_grasp_penalty=-10 + drop=-150) — FAILED give-up exploit
+v18  V2.13 v2 (v1 + REMOVE ee_far_from_cube + drop=-30 + scoop=-5 + reaching=+1.5) — FAILED stuck reach-only + sign-bug
+v19  V2.13 v3 (v2 + rewrite gripper_orientation_penalty position-based weight=-5 + DROP scoop + BOOST reach=+3 + BOOST ee_to_cube=-3) — FAILED Bang-Bang smash
+v20  V2.14 (v3 + episode 10s + scale 0.10 + joint_vel/action_rate ×10) — FAILED snake-mode
+v21  V2.15 (v14 + palm→jaw direction orient_penalty + jaw_below_cube_penalty=-50) — CURRENT, à lancer
 ```
 
 Chaque variante a 4 tasks : `RL-vN-v0`, `RL-vN-Play-v0`, `Visual-vN-v0`, `Visual-vN-Play-v0` (Play = 50 envs + no obs corruption).
@@ -276,6 +628,8 @@ sim/eval2/
 ├── agents/
 │   ├── rsl_rl_ppo_cfg_v2.py
 │   ├── rsl_rl_ppo_cfg_v2_5.py through _v2_11.py    # PPO configs per variant
+│   ├── rsl_rl_ppo_cfg_v2_12.py                     # V2.12 (= V2.9 baseline + DELTA action)
+│   ├── rsl_rl_ppo_cfg_v2_13.py                     # V2.13 (= V2.12 PPO unchanged, env-side fixes only)
 │   └── rsl_rl_ppo_cfg_isaac_defaults.py
 └── scripts/
     ├── train.py                               # wraps isaac_so_arm101.scripts.rsl_rl.train
@@ -288,7 +642,9 @@ sim/eval2/
     ├── inspect_cube_scale.py                  # USD bbox check
     ├── resize_cube_usd.py                     # idempotent USD scale 3cm → 2cm
     ├── recolor_table_usd.py                   # idempotent USD table color override
-    └── pad_v29_for_v210.py                    # V2.9 ckpt padder for V2.10 obs warm-start
+    ├── pad_v29_for_v210.py                    # V2.9 ckpt padder for V2.10 obs warm-start
+    ├── dump_body_names.py                     # NEW V2.13 — list robot body/joint names (confirmed wrist=index 4)
+    └── dump_tb_v212.py                        # NEW V2.12 — export TB events to markdown for LLM consumption
 
 notes/
 ├── eval2_pipeline.md                          # this file
@@ -512,7 +868,12 @@ Chaque variante teste une hypothèse précise. La progression est causale : chaq
 | 11 | **V2.10b** | V2.10 avec `joint_acc_l2 -1e-3 → -3e-5` (÷33), tout le reste identique. Cold-start uniquement. | 🟡 smoothness OK mais reaching plat à 1.7%, policy drift loin du cube | `joint_acc` n'écrase plus le gradient (3 termes en parité), MAIS `reaching tanh std=0.15` sature à d>60cm → la policy s'éloigne sans signal pour revenir |
 | 12 | **V2.10c** | V2.10b + nouveau RewTerm `ee_to_cube_distance` linéaire `-||EE-cube||` weight=-1.0. Cold-start. | 🟡 marche mais lent (reaching 1.7% → 4.1% en 114 iters, projection convergence ~iter 1500+) | Linear distance débloque la dérive away from cube → policy s'approche enfin. Mais convergence trop lente parce que les poids smoothness V2.10 (héritages) sont trop forts. |
 | 13 | **V2.11** | 3 sub-versions tentées : v1 scale=0.20 (échec, range trop restrictif), v2 scale=0.5 + smoothness=-1e-4 (échec, yeet revient), v3 scale=0.5 + smoothness=-5e-3 (annulé avant test) | 🔴 abandonné | Erreur conceptuelle : `JointPositionActionCfg` est en mode absolu, pas delta. Scale borne le range articulaire, pas la vitesse. → switch action class en V2.12. |
-| 14 | **V2.12** ⭐ | Action class : `JointPositionActionCfg` → **`RelativeJointPositionActionCfg`** (delta control, scale=0.20, use_zero_offset=True). vmax mécanique = 6 rad/s = limite Feetech. Reward = V2.9 (grasp+lift gating, smoothness=-1e-4 default) + ee_to_cube_distance. PPO = V2.9 (init_noise=1.0, entropy=0.005). | 🟡 À LANCER | V2.9 marchait sur la TÂCHE, le seul vrai problème était la VITESSE. Delta control la cap structurellement. Tout le reste = V2.9 verbatim. |
+| 14 | **V2.12** | Action class : DELTA + scale=0.20 sans clip. Reward V2.9 + ee_to_cube + 2 exploit fixes (success_bonus=2500, drop_penalty=-50, ee_far_from_cube DoneTerm). + relative vectors obs. | 🔴 **SNAKE/SCOOP confirmé via play_diagnose**. Convergent sur la tâche (grasp+lift+track) mais : action saturation (raw ±6 → vmax peak 21 rad/s), gripper pointing UP at grasp, jaw scraping table, cube éjecté en transport (60%). Sim-to-real impossible. | Manquait clip sur action class (raw actions sortaient de [-1,1]) + posture constraints. |
+| 15 | **V2.13 v1** | V2.12 + 4 fixes: `clip={".*":(-1,1)}` sur RelativeJointPositionActionCfg (vrai vmax 6 rad/s), `gripper_orientation_penalty` weight=-1.0 (penalty pas bonus → no free hover), `scoop_grasp_penalty` weight=-10.0 (wrist_z ≥ ee_z geometric constraint), `cube_dropped_penalty` -50 → -150 (anti-give-up). + V2.12 héritage `ee_far_from_cube` DoneTerm sans penalty. | 🔴 **give-up exploit** | À iter 0-50, `noise_std` MONTE (1.0→1.13), `mean_episode_length` collapse à 18 steps (vs max 150), `reaching` 10%→0.5%, 88% épisodes terminés via `ee_far_from_cube`. Baseline reward ≈ -200/ép (penalties trop brutales) ET DoneTerm escape "gratuit" sans penalty → policy diverge en wandering. |
+| 16 | **V2.13 v2** | v1 + 4 fixes: REMOVE `ee_far_from_cube` DoneTerm (kill exploit channel), `cube_dropped_penalty` -150→-30, `scoop_grasp_penalty` -10→-5, `reaching_object` weight 1.0→1.5 (boost positif pour baseline non-négative). `gripper_orientation_penalty` reste -1.0 (sign-bug NON détecté à ce stade). | 🔴 **stuck reach-only, sign-bug** | Crashé VF blow-up à iter 128. Mais surtout : 0/16 success, 0/16 grasp, EE hover 17cm above cube. Visual replay révèle gripper points UP. `dump_scene_frames` confirme : formule `1 + z_world.z` a sign inversé sur SO-101 (local +z du frame "gripper" pointe BACKWARD, pas FORWARD). Policy rewarded for going UP. |
+| 17 | **V2.13 v3** | v2 + 4 fixes : `gripper_orientation_penalty` réécrite (position-based `clamp((jaw_z - palm_z)/0.05, min=0)` à weight=-5.0), `scoop_grasp_penalty` DROP (weight 0, redundant), `reaching_object` BOOST (1.5 → 3.0, anti-suicide), `ee_to_cube_distance` BOOST (-1 → -3, driver principal). | 🟡 Bang-Bang smash | À iter 100 : **50% GRASPED** (good!) mais max qdot 75 rad/s, table sliding 98%, time-to-grasp 0.33s, 0 lift. Sign-fix orient OK. Policy fonce trop fort. Need speed cap + longer ep. |
+| 18 | **V2.14** | v3 + 4 fixes "Slow & Precise" : `episode_length_s 5→10s`, `arm_action.scale 0.20→0.10` (HARD cap vmax 3 rad/s), `joint_vel_l2 ×10`, `action_rate_l2 ×10`. | 🟡 snake-mode | Bang-Bang KILLED (qdot 27→5, 0% physics breach), grasps plus sustained (147 steps). MAIS converged on SNAKE/HORIZONTAL approach (98% jaws skim table, 0 lift). Cause : jaw-vs-palm-Z orient_penalty = 0 en horizontal aussi qu'en top-down. |
+| 19 | **V2.15** ⭐ | v14 + 2 fixes : REPLACE `gripper_orientation_penalty` par `gripper_pointing_direction_penalty` (palm→jaw direction, catche horizontal aussi), weight -5.0 inchangé. ADD `jaw_below_cube_penalty` weight -50 (safety net physics breach). | 🟡 À LANCER | Strict top-down enforcement. Cold-start (V214 snake strategy irrécupérable). |
 
 ### Audit empirique de la scène (entre V2.8 et V2.8.5)
 
@@ -1059,30 +1420,35 @@ Avec poids 5.0, c'est un **stepping stone** : reaching=1 → grasping=5 → lift
 
 **Reward shaping** (côté env, pas PPO) :
 
-| Reward fix | V2.6 | V2.7 | V2.8 | V2.8.5 | V2.9 | V2.10 | V2.10b | V2.10c | **V2.11** |
-|---|---|---|---|---|---|---|---|---|---|
-| Lift gate | `lifted` only | `grasped ∧ lifted` ✓ | idem | idem | idem | idem | idem | idem | **`lifted` only** ⭐ revert |
-| Tracking gate | `lifted` only | `grasped ∧ lifted` ✓ | idem | idem | idem | idem | idem | idem | **`lifted` only** ⭐ revert |
-| `lifting_object` weight | 15 | 10 | 10 | 10 | 10 | 10 | 10 | 10 | **15** ⭐ Isaac Lab default |
-| `lift_height_threshold` | 0.05 (bug) | 0.05 (bug) | 0.05 (bug) | **0.08** ✓ | 0.08 | 0.08 | 0.08 | 0.08 | 0.08 |
-| `reaching_object.std` | 0.05 (bug) | 0.05 (bug) | 0.05 (bug) | **0.15** ✓ | 0.15 | 0.15 | 0.15 | 0.15 | 0.15 |
-| `ee_to_cube_distance` weight (linéaire) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | -1.0 NEW | **-1.0** gardé |
-| `success_bonus` weight | n/a | 200 | 200 | **1500** ✓ | 1500 | 1500 | 1500 | 1500 | 1500 |
-| `cube_dropped` DoneTerm | n/a | n/a | n/a | **+ ajouté** | idem | idem | idem | idem | idem |
-| `cube_dropped_penalty` weight | n/a | n/a | n/a | n/a | **-5** ✓ | -5 | -5 | -5 | -5 |
-| `action_rate_l2` weight | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -5e-2 (×500) | -5e-2 | -5e-2 | **-5e-3** ⭐ medium (v3) |
-| `joint_vel_l2` weight | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -1e-2 (×100) | -1e-2 | -1e-2 | **-5e-3** ⭐ medium (v3) |
-| `joint_acc_l2` weight | n/a | n/a | n/a | n/a | n/a | -1e-3 NEW | -3e-5 (÷33) | -3e-5 | **0** ⭐ drop |
-| `arm_action.scale` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.25 | 0.25 | 0.25 | 0.5 (V2.11 ABSOLU) |
-| **action class** | absolu | absolu | absolu | absolu | absolu | absolu | absolu | absolu | absolu | **DELTA (V2.12)** ⭐ |
-| `arm_action.scale` (V2.12 DELTA) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a → **0.20 (vmax 6 rad/s)** ⭐ |
-| `entropy_coef` (PPO) | 0.005 | 0.005 | 0.005 | 0.005 | 0.005 | **0.002** | 0.002 | 0.002 | **0.005** ⭐ revert |
-| Cube spawn pose_range | x±5cm, y∈(-16,-10) | idem | idem | idem | idem | x±7.5cm, y±7.5cm, yaw±30° | idem | idem | idem |
-| Cube taille (USD) | 3 cm | 3 cm | 3 cm | 3 cm | 3 cm | 2 cm | 2 cm | 2 cm | 2 cm |
-| Table couleur (USD) | bois LeIsaac | bois | bois | bois | bois | #B8ADA9 | #B8ADA9 | #B8ADA9 | #B8ADA9 |
+| Reward fix | V2.6 | V2.7 | V2.8 | V2.8.5 | V2.9 | V2.10 | V2.10b | V2.10c | V2.11 | V2.12 | V2.13 v1 (fail) | **V2.13 v2** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Lift gate | `lifted` only | `grasped ∧ lifted` ✓ | idem | idem | idem | idem | idem | idem | `lifted` only revert | `grasped ∧ lifted` revert | `grasped ∧ lifted` | `grasped ∧ lifted` |
+| Tracking gate | `lifted` only | `grasped ∧ lifted` ✓ | idem | idem | idem | idem | idem | idem | `lifted` only | `grasped ∧ lifted` | `grasped ∧ lifted` | `grasped ∧ lifted` |
+| `reaching_object` weight | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | **+1.5** ⭐ V2.13 v2 boost |
+| `lifting_object` weight | 15 | 10 | 10 | 10 | 10 | 10 | 10 | 10 | 15 | 10 | 10 | 10 |
+| `lift_height_threshold` | 0.05 (bug) | 0.05 (bug) | 0.05 (bug) | **0.08** ✓ | 0.08 | 0.08 | 0.08 | 0.08 | 0.08 | 0.08 | 0.08 | 0.08 |
+| `reaching_object.std` | 0.05 (bug) | 0.05 (bug) | 0.05 (bug) | **0.15** ✓ | 0.15 | 0.15 | 0.15 | 0.15 | 0.15 | 0.15 | 0.15 | 0.15 |
+| `ee_to_cube_distance` weight (linéaire) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | -1.0 NEW | -1.0 | -1.0 | -1.0 | -1.0 |
+| `success_bonus` weight | n/a | 200 | 200 | **1500** ✓ | 1500 | 1500 | 1500 | 1500 | 1500 | **2500** ⭐ V2.12 | 2500 | 2500 |
+| `cube_dropped` DoneTerm | n/a | n/a | n/a | **+ ajouté** | idem | idem | idem | idem | idem | idem | idem | idem |
+| `cube_dropped_penalty` weight | n/a | n/a | n/a | n/a | **-5** ✓ | -5 | -5 | -5 | -5 | -50 (V2.12) | -150 (FAIL) | **-30** ⭐ V2.13 v2 calibrated |
+| `ee_far_from_cube` DoneTerm | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | + ajouté V2.12 | + ajouté (give-up exploit) | **REMOVED** ⭐ V2.13 v2 fix |
+| `gripper_orientation_penalty` weight | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **-1.0** ⭐ V2.13 NEW | -1.0 (kept) |
+| `scoop_grasp_penalty` weight | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | -10.0 (FAIL too harsh) | **-5.0** ⭐ V2.13 v2 softened |
+| `action_rate_l2` weight | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -5e-2 (×500) | -5e-2 | -5e-2 | -5e-3 medium (v3) | -1e-4 reset | -1e-4 | -1e-4 |
+| `joint_vel_l2` weight | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -1e-4 | -1e-2 (×100) | -1e-2 | -1e-2 | -5e-3 medium (v3) | -1e-4 reset | -1e-4 | -1e-4 |
+| `joint_acc_l2` weight | n/a | n/a | n/a | n/a | n/a | -1e-3 NEW | -3e-5 (÷33) | -3e-5 | 0 drop | 0 | 0 | 0 |
+| **action class** | absolu | absolu | absolu | absolu | absolu | absolu | absolu | absolu | absolu (v2/v3) | **DELTA** ⭐ V2.12 | DELTA | DELTA |
+| `arm_action.scale` (absolu) | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.25 | 0.25 | 0.25 | 0.5 | n/a | n/a | n/a |
+| `arm_action.scale` (DELTA, vmax cap) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **0.20 → vmax 6 rad/s** | 0.20 | 0.20 |
+| `arm_action.clip` (DELTA) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **MANQUANT (bug)** | **`{".*":(-1,1)}`** ⭐ V2.13 fix | `{".*":(-1,1)}` |
+| `entropy_coef` (PPO) | 0.005 | 0.005 | 0.005 | 0.005 | 0.005 | 0.002 | 0.002 | 0.002 | 0.005 revert | 0.005 | 0.005 | 0.005 |
+| Cube spawn pose_range | x±5cm, y∈(-16,-10) | idem | idem | idem | idem | x±7.5cm, y±7.5cm, yaw±30° | idem | idem | idem | idem | idem | idem |
+| Cube taille (USD) | 3 cm | 3 cm | 3 cm | 3 cm | 3 cm | 2 cm | 2 cm | 2 cm | 2 cm | 2 cm | 2 cm | 2 cm |
+| Table couleur (USD) | bois LeIsaac | bois | bois | bois | bois | #B8ADA9 | #B8ADA9 | #B8ADA9 | #B8ADA9 | #B8ADA9 | #B8ADA9 | #B8ADA9 |
 
 ✓ = fix vérifié empiriquement (audit_scene.py / play_diagnose_v2.py)
-⭐ = changement V2.10
+⭐ = changement V2.x ajouté à cette version
 
 ---
 

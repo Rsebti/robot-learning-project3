@@ -293,6 +293,38 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
     deepest_phase = [PHASE_PRE_REACH] * num_envs
     reward_term_sums: dict[str, torch.Tensor] = {}  # term_name -> (num_envs,) cumulative
 
+    # ---- Posture / trajectory diagnostics (V2.12 addition) ----
+    # Detect "snake-like" crawling vs "human-like" top-down approach.
+    #
+    # Definitions:
+    #   gripper_down_score = -ee_axis_z_world.z
+    #     +1.0 = gripper z-axis points straight DOWN (perfect top-down approach)
+    #      0.0 = gripper z-axis horizontal
+    #     -1.0 = gripper points straight UP
+    #
+    #   table_slide_steps  = number of steps where jaw_z_world < TABLE_TOP + 2cm.
+    #     High value (sustained) = bras "rampe" sur la table (snake)
+    #     Low value = approche par le haut, descente puis grasp
+    #
+    #   min_jaw_z_pre_grasp = lowest jaw_z_world reached BEFORE first GRASP_FIRE.
+    #     Low (<= TABLE_TOP + 2cm) = jaw scraping the table during approach
+    #     High (>= 0.10 m) = jaw stays well above table during approach
+    #
+    #   gripper_down_at_grasp = snapshot of gripper_down_score at first GRASP_FIRE.
+    #     >= 0.7 = approached cube from above (good for sim-to-real)
+    #     <= 0.3 = approached horizontally (snake; bad for sim-to-real)
+    TABLE_TOP_Z_W = 0.0415  # measured empirically (audit_scene.py)
+    SLIDE_MARGIN = 0.02     # 2 cm above table top counts as "sliding"
+    DOWN_SCORE_THRESHOLD = 0.5  # gripper-down score above this = "pointing down"
+
+    gripper_down_steps = torch.zeros(num_envs, dtype=torch.int32)   # n steps with gripper_down > 0.5
+    table_slide_steps = torch.zeros(num_envs, dtype=torch.int32)    # n steps with jaw_z < TABLE+2cm
+    min_jaw_z_pre_grasp = torch.full((num_envs,), 999.0)            # min jaw_z BEFORE first grasp
+    gripper_down_score_sum = torch.zeros(num_envs)                  # for mean computation
+    gripper_down_score_count = torch.zeros(num_envs, dtype=torch.int32)
+    gripper_down_at_grasp = torch.full((num_envs,), float("nan"))   # snapshot at first GRASP_FIRE
+    jaw_z_at_grasp = torch.full((num_envs,), float("nan"))          # snapshot at first GRASP_FIRE
+
     # Aggregates
     completed = 0
     summary = {
@@ -306,6 +338,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
         "max_cube_speed_per_ep": [],
         "deepest_phase_per_ep": [],
         "ep_with_tip_below": 0,
+        # V2.12 posture diagnostics
+        "gripper_down_steps_per_ep": [],     # n steps with gripper pointing down (>0.5)
+        "table_slide_steps_per_ep": [],      # n steps with jaw_z near table
+        "min_jaw_z_pre_grasp_per_ep": [],    # min jaw_z before first grasp
+        "mean_gripper_down_per_ep": [],      # avg gripper-down score over the episode
+        "gripper_down_at_grasp_per_ep": [],  # snapshot at first GRASP_FIRE (NaN if no grasp)
+        "jaw_z_at_grasp_per_ep": [],         # jaw_z at first GRASP_FIRE
     }
     drop_modes = {"grasp_then_slip": 0, "bump_without_grasp": 0,
                   "tip_below_table": 0, "other": 0}
@@ -436,6 +475,36 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
         qdot_count += 1
         max_cube_speed_ep = torch.maximum(max_cube_speed_ep, cube_speed.cpu())
 
+        # V2.12 posture diagnostics — per-step
+        # Gripper z-axis in world: positive z component = pointing up,
+        # negative z component = pointing down. We define
+        # gripper_down_score = -axis_z_world[2], so:
+        #   +1.0 = perfectly down (palm above cube, fingers down)
+        #    0.0 = horizontal (palm sideways)
+        #   -1.0 = perfectly up (jaw above gripper body)
+        ee_axis_z_world_step = quat_to_axis_z(gripper_quat_w)        # (B, 3)
+        gripper_down_score_step = (-ee_axis_z_world_step[:, 2]).cpu()  # (B,)
+        gripper_is_down_step = (gripper_down_score_step > DOWN_SCORE_THRESHOLD).int()
+        gripper_down_score_sum += gripper_down_score_step
+        gripper_down_score_count += 1
+        gripper_down_steps += gripper_is_down_step
+
+        # Table-slide detection: jaw close to (or below) table top
+        jaw_z_cpu = jaw_w[:, 2].cpu()
+        table_slide_now = (jaw_z_cpu < (TABLE_TOP_Z_W + SLIDE_MARGIN)).int()
+        table_slide_steps += table_slide_now
+
+        # min_jaw_z BEFORE first GRASP_FIRE (track only when no grasp yet)
+        no_grasp_yet = torch.tensor(
+            [first_grasp[i] < 0 for i in range(num_envs)], dtype=torch.bool
+        )
+        if no_grasp_yet.any():
+            min_jaw_z_pre_grasp = torch.where(
+                no_grasp_yet,
+                torch.minimum(min_jaw_z_pre_grasp, jaw_z_cpu),
+                min_jaw_z_pre_grasp,
+            )
+
         qdot_alarm_now = (max_qdot_now > args_cli.qdot_limit * 1.5).cpu()
         qdot_alarm_count += qdot_alarm_now.int()
         action_saturation_count += per_env_action_sat.int()
@@ -544,6 +613,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
                     cube_speed_at_fire = float(cube_speed[i])
                     gripper_qdot_at_fire = float(joint_vel[i, gripper_joint_idx])
                     jaw_cube_at_fire = float(jaw_cube[i])
+                    # V2.12 posture snapshot at first GRASP_FIRE only
+                    if torch.isnan(gripper_down_at_grasp[i]):
+                        gripper_down_at_grasp[i] = -ee_axis_z[2]   # +1=down, -1=up
+                        jaw_z_at_grasp[i] = float(jaw_w[i, 2])
                     log_event({
                         "type": "GRASP_FIRE", "ts": time.time(), "env": i,
                         "ep_id": ep_iid, "step": this_step,
@@ -716,6 +789,22 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
                 summary["deepest_phase_per_ep"].append(deepest)
                 if first_tip_below[i] >= 0:
                     summary["ep_with_tip_below"] += 1
+                # V2.12 posture diagnostics
+                summary["gripper_down_steps_per_ep"].append(int(gripper_down_steps[i]))
+                summary["table_slide_steps_per_ep"].append(int(table_slide_steps[i]))
+                summary["min_jaw_z_pre_grasp_per_ep"].append(
+                    float(min_jaw_z_pre_grasp[i]) if min_jaw_z_pre_grasp[i] < 999 else float("nan")
+                )
+                count = max(int(gripper_down_score_count[i]), 1)
+                summary["mean_gripper_down_per_ep"].append(
+                    float(gripper_down_score_sum[i]) / count
+                )
+                summary["gripper_down_at_grasp_per_ep"].append(
+                    float(gripper_down_at_grasp[i])
+                )
+                summary["jaw_z_at_grasp_per_ep"].append(
+                    float(jaw_z_at_grasp[i])
+                )
 
                 # Per-term reward totals for this episode (from pre-step snapshot,
                 # which is cumulative through the iteration BEFORE termination —
@@ -794,6 +883,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
                 max_cube_speed_ep[i] = 0.0
                 current_phase[i] = PHASE_PRE_REACH
                 deepest_phase[i] = PHASE_PRE_REACH
+                # V2.12 posture trackers reset
+                gripper_down_steps[i] = 0
+                table_slide_steps[i] = 0
+                min_jaw_z_pre_grasp[i] = 999.0
+                gripper_down_score_sum[i] = 0.0
+                gripper_down_score_count[i] = 0
+                gripper_down_at_grasp[i] = float("nan")
+                jaw_z_at_grasp[i] = float("nan")
                 # prev_episode_sums is read fresh from the manager each iter,
                 # no per-env reset needed here.
                 ep_id[i] = num_envs + completed
@@ -870,6 +967,87 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
         mjz = torch.tensor(summary["min_jaw_z"], dtype=torch.float)
         lines.append(f"  Min jaw.z / ep (world)        : mean={mjz.mean():+.3f}  min={mjz.min():+.3f}")
     lines.append("")
+
+    # ---- POSTURE / TRAJECTORY DIAGNOSIS (V2.12 addition) ----
+    lines.append("=== Posture / trajectory diagnosis (snake vs human) ===")
+    if summary["mean_gripper_down_per_ep"]:
+        mgd = torch.tensor(summary["mean_gripper_down_per_ep"], dtype=torch.float)
+        gds = torch.tensor(summary["gripper_down_steps_per_ep"], dtype=torch.float)
+        tss = torch.tensor(summary["table_slide_steps_per_ep"], dtype=torch.float)
+        mjzpg = torch.tensor(
+            [v for v in summary["min_jaw_z_pre_grasp_per_ep"]
+             if not (isinstance(v, float) and v != v)],
+            dtype=torch.float,
+        )
+        gdag_raw = summary["gripper_down_at_grasp_per_ep"]
+        gdag = torch.tensor(
+            [v for v in gdag_raw if not (isinstance(v, float) and v != v)],
+            dtype=torch.float,
+        )
+        jzg_raw = summary["jaw_z_at_grasp_per_ep"]
+        jzg = torch.tensor(
+            [v for v in jzg_raw if not (isinstance(v, float) and v != v)],
+            dtype=torch.float,
+        )
+        max_steps = max(int(s) for s in summary["grasp_dur_per_ep"]) if summary["grasp_dur_per_ep"] else 150
+
+        lines.append(
+            f"  Mean gripper-down score / ep     : "
+            f"mean={mgd.mean():+.3f}  min={mgd.min():+.3f}  max={mgd.max():+.3f}"
+        )
+        lines.append(f"    (+1=down/human  0=horizontal  -1=up)")
+        lines.append(
+            f"  Steps with gripper down (>{DOWN_SCORE_THRESHOLD}) / ep : "
+            f"mean={gds.mean():.1f} / 150  ({100*gds.mean()/150:.0f}%)"
+        )
+        lines.append(
+            f"  Table slide steps / ep (jaw_z<{TABLE_TOP_Z_W+SLIDE_MARGIN:.2f}m) : "
+            f"mean={tss.mean():.1f} / 150  ({100*tss.mean()/150:.0f}%)"
+        )
+        if mjzpg.numel() > 0:
+            lines.append(
+                f"  Min jaw_z BEFORE first grasp / ep  : "
+                f"mean={mjzpg.mean():+.3f}m  min={mjzpg.min():+.3f}m"
+            )
+        else:
+            lines.append("  Min jaw_z BEFORE first grasp / ep  : (no episodes had pre-grasp data)")
+        if gdag.numel() > 0:
+            lines.append(
+                f"  Gripper-down score AT first grasp  : "
+                f"mean={gdag.mean():+.3f}  ({gdag.numel()}/{completed} eps had grasp)"
+            )
+            lines.append(
+                f"  Jaw z AT first grasp              : "
+                f"mean={jzg.mean():+.3f}m  min={jzg.min():+.3f}m  max={jzg.max():+.3f}m"
+            )
+        else:
+            lines.append("  Gripper-down score AT first grasp  : N/A (no grasps)")
+
+        # ---- Verdict ----
+        avg_down = float(mgd.mean())
+        avg_slide_pct = float(100 * tss.mean() / 150)
+        if gdag.numel() > 0:
+            avg_grasp_down = float(gdag.mean())
+        else:
+            avg_grasp_down = float("nan")
+
+        lines.append("")
+        lines.append("  TRAJECTORY VERDICT:")
+        if avg_down > 0.7 and avg_slide_pct < 10:
+            lines.append("    HUMAN-LIKE (gripper points down, no table sliding) — sim-to-real OK")
+        elif avg_down < 0.3 and avg_slide_pct > 30:
+            lines.append("    SNAKE-LIKE (gripper horizontal + significant table sliding) — sim-to-real RISKY")
+            lines.append("      → policy reaches cube by sliding the gripper along the table.")
+            lines.append("      → friction model in sim is forgiving; real table will not be.")
+            lines.append("      → consider: add 'wrist_pointing_down' bonus reward, or restrict")
+            lines.append("        approach via initial pose, or use a curriculum that rewards")
+            lines.append("        top-down approach early.")
+        else:
+            lines.append(f"    MIXED (avg_down={avg_down:+.2f}, slide={avg_slide_pct:.0f}%)")
+            lines.append("      → neither pure snake nor pure human. Mostly horizontal but")
+            lines.append("        without consistent table sliding.")
+    lines.append("")
+
     lines.append("=== Reward source decomposition (cumulative across all episodes) ===")
     if reward_term_total:
         pos_total = sum(v for v in reward_term_total.values() if v > 0) or 1.0

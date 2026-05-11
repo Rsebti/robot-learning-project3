@@ -22,10 +22,29 @@ import time
 from collections import deque
 from pathlib import Path
 
-LOG_ROOT = Path(r"C:\Users\user\Desktop\MA2\isaac\isaac_so_arm101\logs\rsl_rl")
+_CANDIDATE_LOG_ROOTS = [
+    Path(r"C:\Users\user\Desktop\MA2\robot-learning-project3\logs\rsl_rl"),
+    Path(r"C:\Users\user\Desktop\MA2\isaac\isaac_so_arm101\logs\rsl_rl"),
+]
 
 
-def _latest_run_dir(experiment: str | None) -> Path | None:
+def _pick_log_root() -> Path:
+    """Pick the most recently modified rsl_rl logs dir.
+
+    Historically logs went to isaac_so_arm101/logs/, but starting V2.13
+    runs (2026-05-11) the rsl_rl runner writes into the project repo's
+    logs/ dir instead. We auto-detect by mtime.
+    """
+    existing = [p for p in _CANDIDATE_LOG_ROOTS if p.exists()]
+    if not existing:
+        return _CANDIDATE_LOG_ROOTS[0]
+    return max(existing, key=lambda p: p.stat().st_mtime)
+
+
+LOG_ROOT = _pick_log_root()
+
+
+def _latest_run_dir(experiment: str | None, run: str | None = None) -> Path | None:
     if not LOG_ROOT.exists():
         return None
     if experiment:
@@ -38,6 +57,10 @@ def _latest_run_dir(experiment: str | None) -> Path | None:
         if not candidates:
             return None
         exp_dir = max(candidates, key=lambda p: p.stat().st_mtime)
+    if run:
+        # explicit run dir name (e.g. "2026-05-11_01-15-42") — exact match
+        run_dir = exp_dir / run
+        return run_dir if run_dir.exists() else None
     runs = [p for p in exp_dir.iterdir() if p.is_dir()]
     if not runs:
         return None
@@ -188,19 +211,26 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment", default=None,
                         help="experiment name (default: latest by mtime)")
+    parser.add_argument("--run", default=None,
+                        help="explicit run dir name within experiment "
+                             "(e.g. '2026-05-11_01-15-42'). Defaults to "
+                             "latest by mtime.")
     parser.add_argument("--interval", type=int, default=30,
                         help="seconds between prints")
     args = parser.parse_args()
 
     print("[INFO] Watching training logs. Ctrl+C to stop.")
+    print(f"[INFO] Log root: {LOG_ROOT}")
     print(f"[INFO] Interval: {args.interval}s")
     if args.experiment:
         print(f"[INFO] Experiment: {args.experiment}")
     else:
         print("[INFO] Experiment: latest (auto-detect)")
+    if args.run:
+        print(f"[INFO] Run: {args.run} (pinned)")
 
     while True:
-        run_dir = _latest_run_dir(args.experiment)
+        run_dir = _latest_run_dir(args.experiment, args.run)
         if run_dir is None:
             print(f"[WARN] No run found under {LOG_ROOT}. Waiting…")
         else:
