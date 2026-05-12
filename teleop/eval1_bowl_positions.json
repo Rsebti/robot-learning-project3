@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "purpose": "Authoritative record of bowl positions for Eval 1 data collection.",
+    "frame": "robot_base",
+    "units": "cm",
+    "axes": {
+      "x": "+x is to the operator's RIGHT of the robot base origin (the base of the follower arm).",
+      "y": "+y is FORWARD on the table, away from the robot base (sometimes called 'up' when viewed top-down).",
+      "z": "+z is vertical (not tracked here — bowl always rests on the table plane)."
+    },
+    "convention_note": "When the operator says 'up' from a top-down view of the workspace, that maps to +y in the robot base frame. Confirm with a ruler reading once before relying on these numbers for training.",
+    "role_legend": {
+      "train": "Position used during demo recording. Policy sees these in its training distribution.",
+      "eval":  "Position used at evaluation rollout time. Should NOT overlap with any 'train' position so we measure true generalization, not memorization."
+    }
+  },
+  "positions": {
+    "1": {"x_cm": 16, "y_cm": 32, "role": "train", "notes": "First training bowl position."}
+  }
+}

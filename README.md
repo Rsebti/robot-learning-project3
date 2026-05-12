@@ -1,6 +1,34 @@
 # robot-learning-project3
 
 
+** Quick start **
+
+  lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem5B141129871 \
+    --robot.id=so101_follower \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem5B141128171 \
+    --teleop.id=so101_leader \
+    --display_data=false
+
+
+  If you want the wrist camera preview too:
+
+  lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem5B141129871 \
+    --robot.id=so101_follower \
+    --robot.cameras='{"wrist": {"type": "opencv", "index_or_path": 1, 
+  "width": 640, "height": 480, "fps": 30}}' \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem5B141128171 \
+    --teleop.id=so101_leader \
+    --display_data=true
+
+
+# find ports
+using *lerobot-find-ports
 
 
 

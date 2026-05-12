@@ -9,10 +9,10 @@
 
 set -euo pipefail
 
-REPO_ID="${REPO_ID:-osammotg1/projet3-eval1-v1}"
+REPO_ID="${REPO_ID:-osammotg1/projet3-eval1-v2-tom-hugo}"
 EPISODES_PER_COLOR="${EPISODES_PER_COLOR:-10}"
-EPISODE_TIME_S="${EPISODE_TIME_S:-15}"
-RESET_TIME_S="${RESET_TIME_S:-5}"
+EPISODE_TIME_S="${EPISODE_TIME_S:-55}"
+RESET_TIME_S="${RESET_TIME_S:-0}"
 FPS="${FPS:-30}"
 
 # Local data root for the dataset. Required because lerobot's resume() refuses
@@ -36,6 +36,14 @@ VCODEC="${VCODEC:-libsvtav1}"
 # START_FROM: skip colors before this one when resuming. Empty = start at yellow.
 # Examples:  START_FROM=green  START_FROM=violet  START_FROM=red
 START_FROM="${START_FROM:-}"
+
+# MONITOR=true pipes lerobot stdout/stderr through teleop/monitor_fps.py to
+# surface slow-frame warnings (and an audible alert) live in the console.
+MONITOR="${MONITOR:-false}"
+PIPE_THROUGH=(cat)
+if [ "${MONITOR}" = "true" ]; then
+  PIPE_THROUGH=(python3 "${PWD}/teleop/monitor_fps.py")
+fi
 
 # Optional: route Rerun stream to a network gRPC server (e.g. one started with
 #   rerun --serve-web --bind 127.0.0.1
@@ -129,8 +137,8 @@ for i in "${!COLORS[@]}"; do
       --dataset.encoder_threads="${ENCODER_THREADS}" \
       --dataset.vcodec="${VCODEC}" \
       ${DISPLAY_FLAGS} \
-      ${RESUME_FLAG}
-    rc=$?
+      ${RESUME_FLAG} 2>&1 | "${PIPE_THROUGH[@]}"
+    rc=${PIPESTATUS[0]}
     set -e
     if [ "$rc" -eq 0 ]; then
       break
