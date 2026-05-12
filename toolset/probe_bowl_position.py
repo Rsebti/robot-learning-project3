@@ -47,10 +47,13 @@ import yaml
 #   L4 = 0.049 (wrist_flex link length)
 #   d5 = 0.0   (wrist_roll offset)
 
-_L_BASE_Z   = 0.0595   # height of shoulder_pan joint above base plate (m)
+_L_BASE_Z   = 0.1345   # height of shoulder_pan joint above table top (m)
+                       # = base column + shoulder offset, calibrated so the
+                       # gripper tip lands at ~0.01 m during a tabletop grasp
 _L_UPPER    = 0.1165   # shoulder_lift → elbow (upper arm, m)
 _L_FOREARM  = 0.1360   # elbow → wrist_flex (forearm, m)
 _L_WRIST    = 0.0490   # wrist_flex → wrist_roll (m)
+_L_GRIPPER  = 0.0850   # wrist_roll → fingertip contact point (m)
 
 
 def _rot_z(theta):
@@ -101,6 +104,17 @@ def fk_wrist(q: list[float]) -> np.ndarray:
     T = T @ _trans(_L_WRIST, 0, 0) @ _rot_z(q5)
 
     return T
+
+
+def fk_tip(q: list[float]) -> np.ndarray:
+    """FK to the gripper fingertip contact point.
+
+    Extends the wrist FK by _L_GRIPPER along the gripper's local +X axis
+    (the gripper's forward direction after wrist_roll). When the arm is
+    stretched out, this correctly accounts for the non-vertical grasp
+    geometry — the offset has xy components, not just z.
+    """
+    return fk_wrist(q) @ _trans(_L_GRIPPER, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +208,7 @@ def _apply_calibration(raw: int, cal: dict) -> float:
 # Config persistence
 # ---------------------------------------------------------------------------
 
-CONFIG_PATH = Path(__file__).parent.parent / "configs" / "bowl_positions.yaml"
+CONFIG_PATH = Path(__file__).parent / "configs" / "bowl_positions.yaml"
 
 
 def load_config() -> dict:
