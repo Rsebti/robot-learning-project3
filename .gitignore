@@ -233,3 +233,12 @@ sim/eval2/perception/data.pt
 sim/eval2/perception/checkpoint.pt
 sim/eval2/perception/preview/
 sim/eval2/perception/deploy_preview/
+
+# Training artifacts (machine-specific, heavy)
+logs/
+outputs/
+play_logs/
+
+# Isaac Sim / Omniverse runtime cache
+*.dmp
+.kit_logs/

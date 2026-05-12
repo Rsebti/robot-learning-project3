@@ -1,16 +1,22 @@
-"""Eval 2 v0 — visual playback of a trained policy.
+"""Phase A play wrapper — same idea as `train.py` but for `play.py`.
 
-Usage (no --headless, opens an Isaac Sim window):
+Loads a trained checkpoint and replays it on the restricted lift task.
 
-    uv run python -m sim.eval2.scripts.play --task Eval2-PickInBowl-Play-v0
+Example
+-------
+.. code-block:: powershell
+
+    cd C:\\Users\\user\\Desktop\\MA2\\isaac\\isaac_so_arm101
+    uv run python -m sim.eval2.scripts.play `
+        --task Isaac-SO-ARM101-Lift-Cube-Restricted-Play-v0 `
+        --num_envs 4 `
+        --checkpoint logs\\rsl_rl\\lift\\<timestamp>\\model_999.pt
 """
+import runpy
 
-from __future__ import annotations
+import sim.eval2  # noqa: F401  (registers our tasks)
 
-import sim.eval2  # noqa: F401  (registers the gym envs)
-
-from isaac_so_arm101.scripts.rsl_rl.play import main
-
-
-if __name__ == "__main__":
-    main()
+runpy.run_module(
+    "isaac_so_arm101.scripts.rsl_rl.play",
+    run_name="__main__",
+)
