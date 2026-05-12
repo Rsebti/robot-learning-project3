@@ -1183,3 +1183,347 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+
+# V2.16 — V2.15 + cube_height_above_spawn dense lift reward (+30) to break
+# the "grasp-only local optimum" observed in V2.15 model_300. Same PPO
+# config (env-side change only).
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V216-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV216"
+        ),
+        # V216 uses the resume-enabled PPO config (resume=true hardcoded
+        # because Hydra CLI override of bool fields doesn't apply on
+        # Windows PowerShell — only strings make it through).
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_16_resume:LiftCubePPORunnerCfgV216Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V216-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV216_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_16_resume:LiftCubePPORunnerCfgV216Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V216-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV216"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_16_resume:LiftCubePPORunnerCfgV216Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V216-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV216_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_16_resume:LiftCubePPORunnerCfgV216Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+
+# V2.17 — V2.16 + 5x boost on cube_height_above_spawn (+30→+150) + half
+# binary lift threshold (0.08→0.04). Resume from V2.16 model_350. User
+# MUST pass --resume on the CLI for resume to fire (Isaac Lab CLI handler
+# overrides agent_cfg.resume from --resume argparse flag).
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V217-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV217"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_17_resume:LiftCubePPORunnerCfgV217Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V217-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV217_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_17_resume:LiftCubePPORunnerCfgV217Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V217-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV217"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_17_resume:LiftCubePPORunnerCfgV217Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V217-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV217_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_17_resume:LiftCubePPORunnerCfgV217Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+
+# V2.18 — "Precision Landing" structural rewrite (Claude search design).
+# Bounded-magnitude (|r|≤5 budget), multiplicatively-gated reward stack.
+# Resumes from V2.15 model_300 (clean baseline; V2.16/V2.17 abandoned).
+# User MUST pass --resume on the CLI for resume to fire.
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V218-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV218"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18_resume:LiftCubePPORunnerCfgV218Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V218-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV218_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18_resume:LiftCubePPORunnerCfgV218Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V218-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV218"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18_resume:LiftCubePPORunnerCfgV218Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V218-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV218_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18_resume:LiftCubePPORunnerCfgV218Resume"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+
+# V2.18 COLD — same env as V2.18, but a cold-start PPO config (no resume).
+# Used after the V2.18 resume from V2.15 model_300 failed because V2.15's
+# "false grasp" policy cannot fire V2.18's strict predicate, leaving the
+# resumed run without any positive grasp signal.
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V218-cold-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV218"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18_cold:LiftCubePPORunnerCfgV218Cold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V218-cold-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV218_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18_cold:LiftCubePPORunnerCfgV218Cold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V218-cold-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV218"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18_cold:LiftCubePPORunnerCfgV218Cold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V218-cold-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV218_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18_cold:LiftCubePPORunnerCfgV218Cold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+
+# V2.18 b — anti-hover-stall + anti-VF-blowup hot-fix.
+# Env-side : hover_height weight 0.5 → 0.2 (RewardsCfgV218B).
+# PPO-side : 9 changes from Claude search (notes/v218b_ppo_search_claude.md):
+#   empirical_norm=True, noise_std=log, desired_kl=0.01, lr_init=3e-4,
+#   entropy_coef=0.01, value_clip=False, RND, wider critic, more SGD.
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V218B-cold-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV218B"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18b_cold:LiftCubePPORunnerCfgV218BCold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-RL-V218B-cold-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLEnvCfgV218B_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18b_cold:LiftCubePPORunnerCfgV218BCold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V218B-cold-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV218B"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18b_cold:LiftCubePPORunnerCfgV218BCold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V218B-cold-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV218B_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18b_cold:LiftCubePPORunnerCfgV218BCold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+
+# V2.18 b PICKLIFT — symmetric actor-critic, no cube ground-truth anywhere.
+# Both actor and critic input: joint_pos + joint_vel + wrist_features = 524 dims.
+# Same rewards / geometry / PPO hyperparams as V218B; only obs structure changes.
+# Sim2real-clean: critic stays in the same "no perception" regime as the actor.
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V218B-picklift-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV218BPickLift"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18b_picklift_cold:"
+            "LiftCubePPORunnerCfgV218BPickLiftCold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V218B-picklift-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:"
+            "LeIsaacLiftCubeRLVisualEnvCfgV218BPickLift_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_18b_picklift_cold:"
+            "LiftCubePPORunnerCfgV218BPickLiftCold"
+        ),
+    },
+    disable_env_checker=True,
+)

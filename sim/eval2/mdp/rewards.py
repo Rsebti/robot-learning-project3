@@ -589,6 +589,46 @@ def jaw_below_cube_penalty(
     return torch.clamp(cube_bottom - jaw_z, min=0.0)
 
 
+def cube_height_above_spawn(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    spawn_z: float = 0.041,
+    max_height: float = 0.20,
+) -> torch.Tensor:
+    """V2.16 — Dense linear reward proportional to cube z above its spawn.
+
+    Designed to break the V2.15 "grasp-only local optimum": PPO gets a
+    smooth gradient for partial lift starting from the very first mm
+    above the table, instead of the binary `lifting_object` (z_rel >
+    0.08m) which only fires for full 5+ cm lifts.
+
+    Returns:
+        clamp(cube.z - spawn_z, min=0, max=0.20), i.e., in [0, 0.20] m.
+            0.000 — cube on table (no lift)
+            0.005 — cube 5 mm above (first signal!)
+            0.050 — cube 5 cm above table
+            0.200 — cube 20 cm above (capped at goal height)
+
+    Typical values with weight=+30 (V2.16):
+        Cube 1 cm above spawn:  0.010 → +0.30/step
+        Cube 5 cm above:        0.050 → +1.50/step
+        Cube 10 cm above:       0.100 → +3.00/step
+        Cube 20 cm above:       0.200 → +6.00/step (cap, ≈ goal_z range)
+
+    The cap at 0.20 m prevents the policy from gaming "lift cube to
+    unreasonable height" — once at goal range, no extra incentive.
+
+    ``spawn_z = 0.041`` is the constant cube spawn z empirically verified
+    via dump_scene_frames on 2026-05-11 (LeIsaac scene has cube center
+    1 cm above the table top at z=0.031, i.e., cube root_pos_w.z = 0.041).
+    Cube spawn z does NOT randomize in V2.15 (constant across resets),
+    so the offset is stable.
+    """
+    cube = env.scene[cube_cfg.name]
+    height_above = cube.data.root_pos_w[..., 2] - spawn_z
+    return torch.clamp(height_above, min=0.0, max=max_height)
+
+
 def cube_dropped_float(
     env: ManagerBasedRLEnv,
     world_z_threshold: float = 0.04,
@@ -624,3 +664,365 @@ def cube_dropped_float(
         world_z_threshold=world_z_threshold,
         cube_cfg=cube_cfg,
     ).float()
+
+
+# ===========================================================================
+# V2.18 — "Precision Landing" reward stack (Claude search design)
+#
+# Bounded-magnitude, multiplicatively-gated rewards designed to:
+#   1. Force precision pre-grasp positioning (palm above cube + aligned).
+#   2. Use a strict 6-condition grasp predicate (cube_grasped_strict)
+#      that requires geometric containment between the jaws.
+#   3. Keep lift/goal/fine rewards ZERO unless the strict grasp predicate
+#      fires (multiplicative gating).
+#   4. Penalize jaw approaching the table top WITHOUT a grasp (anti-smash).
+#   5. Keep all dense weights ≤ 2.0 (per-step magnitude budget |r| ≤ 5
+#      for PPO stability with γ=0.99 × 300-step episodes).
+#
+# Design rationale, calibration math, citations, risk runbook: see
+# `notes/eval2_pipeline.md` § "V2.18 design" (or the original Claude
+# search artifact archived in `notes/v218_design_claude_search.md`).
+# ===========================================================================
+
+
+def cube_grasped_strict(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    gripper_joint_name: str = "gripper",
+) -> torch.Tensor:
+    """Strict 6-condition geometric containment predicate (V2.18).
+
+    Replaces the loose ``cube_grasped`` predicate (jaw<4cm + gripper
+    closed) which was a false-positive when the cube was BESIDE the
+    jaws (visual confirmed on V2.15 model_300, 16/16 episodes had
+    grasp_LOST/ejection on lift attempt).
+
+    All six conditions must be simultaneously true :
+      (a) palm strictly above cube top by ≥ 1 cm safety margin
+      (b) jaw at or below cube top (jaws have descended past the top)
+      (c) jaw at or above cube bottom (catches scoop-from-below)
+      (d) cube xy within 1.5 cm of the palm-jaw midpoint (lateral
+          containment between the fingers)
+      (e) gripper joint closed past 70% of its closing travel
+      (f) cube lateral velocity < 0.50 m/s (cube not ejecting)
+
+    Returns BoolTensor (num_envs,) — used as a multiplicative gate
+    in lift_height_gated, goal_tracking_gated_*, and as the binary
+    grasp reward source.
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    robot: Articulation = env.scene[robot_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+
+    cube_pos_w = cube.data.root_pos_w                  # (N, 3)
+    cube_vel_w = cube.data.root_lin_vel_w              # (N, 3)
+    palm_w = ee_frame.data.target_pos_w[..., 0, :]     # (N, 3)
+    jaw_w = ee_frame.data.target_pos_w[..., 1, :]      # (N, 3)
+
+    cube_z = cube_pos_w[:, 2]
+    cube_top = cube_z + 0.010
+    cube_bottom = cube_z - 0.010
+
+    cond_a = palm_w[:, 2] >= (cube_top + 0.010)        # palm ≥ cube_top + 1 cm
+    cond_b = jaw_w[:, 2] <= (cube_top + 0.005)         # jaw ≤ cube_top + 5 mm
+    cond_c = jaw_w[:, 2] >= (cube_bottom - 0.005)      # jaw ≥ cube_bottom − 5 mm
+
+    midpoint_xy = 0.5 * (palm_w[:, :2] + jaw_w[:, :2])
+    lateral_d = torch.norm(cube_pos_w[:, :2] - midpoint_xy, dim=1)
+    cond_d = lateral_d <= 0.015                        # ≤ 1.5 cm
+
+    # Gripper closure check.
+    # SO-101 gripper joint range = (-10°, +100°) per leisaac asset cfg.
+    # BinaryJointPositionActionCfg in our env commands:
+    #   open  -> q_target = 0.5 rad (≈ 29°)
+    #   close -> q_target = 0.0 rad
+    # i.e. SMALLER q == more closed. The original `q >= 0.7 * q_max`
+    # check was reversed (it required q >= 1.22 rad ≈ 70°, which the
+    # action manager can never command — gripper joint stays in [0, 0.5]).
+    # That bug is why grasp_strict fired ZERO times across 967 iters of
+    # V2.18 cold + V2.18b. Fix: check that q is within 30 % of the close
+    # command target.
+    gripper_ids, _ = robot.find_joints([gripper_joint_name])
+    gripper_idx = gripper_ids[0]
+    q_gripper = robot.data.joint_pos[:, gripper_idx]
+    # close target = 0.0, open target = 0.5 → 70 % of closing travel = 0.15
+    cond_e = q_gripper <= 0.15                         # ≥ 70 % closed
+
+    cube_speed_xy = torch.norm(cube_vel_w[:, :2], dim=1)
+    cond_f = cube_speed_xy < 0.50                      # < 0.50 m/s
+
+    return cond_a & cond_b & cond_c & cond_d & cond_e & cond_f
+
+
+def cube_grasped_strict_float(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    gripper_joint_name: str = "gripper",
+) -> torch.Tensor:
+    """Float-cast of cube_grasped_strict for use as a RewTerm.
+
+    Used directly as the V2.18 ``grasp_strict`` reward (weight +2.0)
+    and indirectly as the multiplicative gate in lift/goal rewards.
+    """
+    return cube_grasped_strict(env, cube_cfg, robot_cfg, ee_frame_cfg,
+                               gripper_joint_name).float()
+
+
+def ee_to_cube_distance_clipped(
+    env: ManagerBasedRLEnv,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    clip_max: float = 0.30,
+) -> torch.Tensor:
+    """V2.18 #1 — Linear distance penalty, clipped at 0.30 m.
+
+    Clipping bounds the cold-start dense penalty so the cumulative
+    per-episode cost cannot exceed |−0.30 × 300 × weight| = |−90 × weight|.
+    With weight=−1.0 this gives a worst-case −90/ep, well below the
+    drop penalty −50, eliminating the V2.13 v1 suicide-by-drop trap.
+
+    Use with weight=-1.0.
+    """
+    cube: RigidObject = env.scene[object_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+    palm = ee_frame.data.target_pos_w[..., 0, :]
+    cube_pos = cube.data.root_pos_w
+    d = torch.norm(palm - cube_pos, dim=-1)
+    return torch.clamp(d, max=clip_max)
+
+
+def palm_xy_above_cube(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    std: float = 0.04,
+    height_margin: float = 0.005,
+) -> torch.Tensor:
+    """V2.18 #3 — Precision lateral alignment reward (palm above cube).
+
+    Returns ``1 - tanh(||palm_xy - cube_xy|| / std)`` IF palm is above
+    the cube (palm_z > cube_top + height_margin), else 0. The gate
+    prevents the policy from getting xy-alignment credit while the
+    palm is at table level or below cube top (= sideways snake approach).
+
+    std = 0.04 m = 2 × cube_half (0.010) + 2 × jaw_x_offset (0.021).
+    Tight enough that a sideways approach gets ~0.4 reward (not full 0.8).
+
+    Use with weight=+0.8.
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+    palm = ee_frame.data.target_pos_w[..., 0, :]
+    cube_pos = cube.data.root_pos_w
+
+    cube_top = cube_pos[:, 2] + 0.010
+    above = (palm[:, 2] > (cube_top + height_margin)).float()
+
+    dxy = torch.norm(palm[:, :2] - cube_pos[:, :2], dim=-1)
+    score = 1.0 - torch.tanh(dxy / std)
+    return above * score
+
+
+def hover_height_gaussian(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    target_height: float = 0.05,
+    sigma: float = 0.025,
+    gripper_joint_name: str = "gripper",
+) -> torch.Tensor:
+    """V2.18 #4 — Gaussian hover bonus peaked 5 cm above cube top.
+
+    Returns ``exp(-((h - target_height)/sigma)^2)`` where
+    ``h = palm_z - cube_top``, gated multiplicatively by:
+      * palm_xy aligned with cube (using palm_xy_above_cube as alignment)
+      * NOT cube_grasped_strict (this term turns off once strict grasp
+        fires, freeing the policy to descend)
+
+    Target h = 5 cm matches the palm-jaw vertical offset (~5 cm),
+    meaning when palm is at hover height, the jaw is exactly at cube_top.
+
+    Use with weight=+0.5.
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+    palm = ee_frame.data.target_pos_w[..., 0, :]
+    cube_pos = cube.data.root_pos_w
+    cube_top = cube_pos[:, 2] + 0.010
+
+    h = palm[:, 2] - cube_top
+    raw = torch.exp(-((h - target_height) / sigma) ** 2)
+
+    # Alignment gate (only fires when palm is laterally aligned with cube)
+    dxy = torch.norm(palm[:, :2] - cube_pos[:, :2], dim=-1)
+    align = (1.0 - torch.tanh(dxy / 0.04))
+    align_gate = (align > 0.6).float()
+
+    # Not-grasped gate
+    grasped = cube_grasped_strict(env, cube_cfg, robot_cfg, ee_frame_cfg,
+                                  gripper_joint_name)
+    not_grasped = (~grasped).float()
+
+    return raw * align_gate * not_grasped
+
+
+def lift_height_gated(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    spawn_z: float = 0.041,
+    max_lift: float = 0.10,
+    gripper_joint_name: str = "gripper",
+) -> torch.Tensor:
+    """V2.18 #6 — Bounded lift reward multiplicatively gated by strict grasp.
+
+    Returns ``clamp((cube.z - spawn_z) / max_lift, 0, 1) × strict_grasp``.
+    Capped at 1.0 by the normalization — even if the cube is somehow
+    flung to 1 m, the reward stays bounded. With weight=+1.5 the per-step
+    ceiling is +1.5, well within the |r|≤5 budget.
+
+    The multiplicative ``× strict_grasp`` makes "lift without grasp"
+    mathematically impossible — addresses V2.7/V2.9 flick exploit AND
+    the V2.16/V2.17 "fake lift" from ungated dense lift.
+
+    Use with weight=+1.5.
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    cube_z = cube.data.root_pos_w[:, 2]
+    height_above = torch.clamp((cube_z - spawn_z) / max_lift, 0.0, 1.0)
+    grasped = cube_grasped_strict(env, cube_cfg, robot_cfg, ee_frame_cfg,
+                                  gripper_joint_name).float()
+    return height_above * grasped
+
+
+def goal_tracking_gated(
+    env: ManagerBasedRLEnv,
+    std: float = 0.20,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    command_name: str = "object_pose",
+    min_lift_height: float = 0.08,
+    gripper_joint_name: str = "gripper",
+) -> torch.Tensor:
+    """V2.18 #7/#8 — Goal tracking with double gate: strict_grasp × lifted.
+
+    Returns ``(1 - tanh(d / std)) × strict_grasp × (cube_z > min_lift)``.
+
+    Triple condition prevents the policy from collecting goal-tracking
+    credit by sliding the cube along the table into the goal projection
+    (which would NOT count as success but COULD farm the dense reward).
+
+    Use with weight=+1.0 (coarse, std=0.20) or +0.5 (fine, std=0.04).
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    robot: Articulation = env.scene[robot_cfg.name]
+
+    cube_pos_w = cube.data.root_pos_w
+    command = env.command_manager.get_command(command_name)
+    goal_pos_b = command[:, :3]
+    goal_pos_w, _ = combine_frame_transforms(
+        robot.data.root_pos_w, robot.data.root_quat_w, goal_pos_b
+    )
+
+    d = torch.norm(goal_pos_w - cube_pos_w, dim=-1)
+    raw = 1.0 - torch.tanh(d / std)
+
+    grasped = cube_grasped_strict(env, cube_cfg, robot_cfg, ee_frame_cfg,
+                                  gripper_joint_name).float()
+    lifted = (cube_pos_w[:, 2] > min_lift_height).float()
+    return raw * grasped * lifted
+
+
+def palm_to_jaw_orient_v218(
+    env: ManagerBasedRLEnv,
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+) -> torch.Tensor:
+    """V2.18 #9 — Palm-to-jaw direction reward (top-down posture).
+
+    Returns ``-delta_hat[2]`` where ``delta_hat = (jaw - palm) / ||(jaw - palm)||``.
+
+    Semantics (Isaac Sim world frame, +z up):
+      * jaw strictly below palm (top-down) → delta_z < 0 → -delta_z > 0
+        → returns +1 (rewarded)
+      * jaw at same z (horizontal/snake)  → delta_z = 0 → returns 0
+      * jaw above palm (gripper-up)        → delta_z > 0 → returns -1
+
+    Use with weight=+0.3 (small residual nudge — palm_xy_above_cube +
+    hover_height already encode top-down posture geometrically).
+
+    NB: SIGN-VERIFY before launch via dump_scene_frames.py. The Isaac Sim
+    world frame has +z up, so jaw being below palm in a top-down pose
+    means delta_z < 0 (negative), hence ``-delta_z > 0`` reward. This
+    is OPPOSITE sign from V2.15's broken formulation (which incorrectly
+    used `+delta.z` and rewarded gripper-up).
+    """
+    ee_frame = env.scene[ee_frame_cfg.name]
+    palm = ee_frame.data.target_pos_w[..., 0, :]
+    jaw = ee_frame.data.target_pos_w[..., 1, :]
+    delta = jaw - palm
+    delta_norm = delta / (torch.norm(delta, dim=-1, keepdim=True) + 1e-6)
+    return torch.clamp(-delta_norm[..., 2], min=-1.0, max=1.0)
+
+
+def jaw_table_impact_penalty(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    safe_height: float = 0.06,
+    gripper_joint_name: str = "gripper",
+) -> torch.Tensor:
+    """V2.18 #10 — Ramped jaw-near-table penalty, gated by NOT grasped.
+
+    Returns ``clamp((safe_height - jaw_z) / safe_height, 0, 1) × (NOT strict_grasp)``.
+
+    The penalty ramps smoothly from 0 (jaw at safe_height = 6 cm) to 1
+    (jaw at 0 m world). With weight=-2.0 this gives at most -2/step when
+    jaw is at the floor AND not grasping.
+
+    Once grasp_strict fires, the term turns off — the policy is free to
+    descend toward the table to place the cube.
+
+    Use with weight=-2.0.
+    """
+    ee_frame = env.scene[ee_frame_cfg.name]
+    jaw = ee_frame.data.target_pos_w[..., 1, :]
+    jaw_z = jaw[:, 2]
+
+    pen = torch.clamp((safe_height - jaw_z) / safe_height, min=0.0, max=1.0)
+
+    grasped = cube_grasped_strict(env, cube_cfg, robot_cfg, ee_frame_cfg,
+                                  gripper_joint_name)
+    not_grasped = (~grasped).float()
+    return pen * not_grasped
+
+
+def cube_at_goal_with_lift(
+    env: ManagerBasedRLEnv,
+    distance_threshold: float = 0.05,
+    min_lift_height: float = 0.08,
+    command_name: str = "object_pose",
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """V2.18 success bonus — cube within ``distance_threshold`` of goal
+    AND cube has been lifted above ``min_lift_height``.
+
+    Pairs with the matching DoneTerm. The min_lift_height closes the
+    "slide cube into goal projection" exploit class.
+
+    Returns float {0.0, 1.0}.
+    """
+    from .terminations import cube_reached_goal as _cube_reached_goal
+    reached = _cube_reached_goal(env, distance_threshold, command_name,
+                                 cube_cfg, robot_cfg)
+    cube: RigidObject = env.scene[cube_cfg.name]
+    lifted = cube.data.root_pos_w[:, 2] > min_lift_height
+    return (reached & lifted).float()

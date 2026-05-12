@@ -2547,3 +2547,739 @@ class LeIsaacLiftCubeRLVisualEnvCfgV215_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV215):
         self.scene.num_envs = 50
         self.scene.env_spacing = 2.5
         self.observations.policy.enable_corruption = False
+
+
+# ---------------------------------------------------------------------------
+# V2.16 — Break the "grasp-only local optimum" observed in V2.15.
+#
+# Diagnostic V2.15 model_300 (TB read 2026-05-11):
+#   - GOOD: top-down posture confirmed, no scoop, no smash, no suicide.
+#     Reach saturated at 1.18/1.5 (78%). Grasp fires 83% of steps.
+#     Mean reward +46/ep. noise_std descending 0.88. Healthy training.
+#   - STUCK: lifting_object = 0 sustained at iter 100, 150, 198, 225,
+#     250, 275, 301 (NO progress in ~200 iters).
+#     position_error stays at 0.15 m (= cube doesn't move).
+#     PPO converged on "grasp without lift" because:
+#       1) grasping_cube +5 × 0.83 = +4.2/step is stable reward.
+#       2) lifting_object +10 BINARY (z_rel > 0.08m): NO gradient until
+#          the policy commits to a full 5+ cm lift.
+#       3) object_goal_tracking is gated on grasp ∧ lift → no signal
+#          to drive cube toward goal until lift fires.
+#       4) success_bonus +2500 is terminal sparse, unreachable via
+#          random exploration from "stuck on grasp" state.
+#     The local opt is rationally stable — trying to lift risks
+#     losing the +4.2/step grasp reward with no compensating signal.
+#
+# V2.16 = V2.15 + 1 new dense reward term (no other changes):
+#   - cube_height_above_spawn : weight = +30, formula
+#     clamp(cube.z - 0.041, min=0, max=0.20). Provides a CONTINUOUS
+#     gradient for partial lift. First mm of lift = first +0.03/step.
+#     5 cm above spawn = +1.5/step (matches scale of lifting_object
+#     binary). 20 cm above (goal range) = +6/step (cap).
+#
+# Decision : resume from V2.15 model_300 (existing reach + grasp +
+# top-down skills preserved). Cold-start would waste ~5h re-learning
+# basic skills.
+# ---------------------------------------------------------------------------
+
+
+@configclass
+class RewardsCfgV216(RewardsCfgV215):
+    """V2.16 — V2.15 + dense lift reward to break grasp-only local opt.
+
+    Inherits RewardsCfgV215 (palm→jaw direction orient_penalty + jaw_below_cube
+    + all V2.14 smoothness boosts + V2.13v3 anti-suicide reach + linear
+    ee_to_cube). Adds ONE term:
+
+      cube_height_above_spawn : weight = +30 (NEW)
+
+    All other terms inherit unchanged.
+
+    Why +30 (not +10 or +50):
+      Per-step at full saturation (cube at 20 cm above spawn, capped):
+          0.20 × 30 = +6.0/step → +1800/ep over 300 steps.
+      This dominates the "stuck on grasp" reward (+1350/ep). So PPO
+      strictly prefers lift > no-lift even if grasp success rate drops
+      a bit during the lift attempt.
+
+      Per-step at start of lift (cube 1 cm above spawn):
+          0.01 × 30 = +0.30/step
+      Tiny but non-zero — PPO sees the gradient and explores upward
+      motion. Once cube is 5 cm above (+1.5/step), the gradient is
+      strong enough to dominate.
+    """
+
+    cube_height_above_spawn = RewTerm(
+        func=eval2_mdp.cube_height_above_spawn,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "spawn_z": 0.041,
+            "max_height": 0.20,
+        },
+        weight=30.0,
+    )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV216(LeIsaacLiftCubeRLEnvCfgV215):
+    """V2.16 state-only env — V2.15 + dense lift reward."""
+
+    rewards: RewardsCfgV216 = RewardsCfgV216()
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV216_PLAY(LeIsaacLiftCubeRLEnvCfgV216):
+    """Smaller scene + no obs corruption for replaying a V2.16 checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV216(LeIsaacLiftCubeRLVisualEnvCfgV215):
+    """V2.16 visual env — V2.15 visual + dense lift reward."""
+
+    rewards: RewardsCfgV216 = RewardsCfgV216()
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV216_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV216):
+    """Smaller scene + no obs corruption for replaying a V2.16 visual ckpt."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+# ---------------------------------------------------------------------------
+# V2.17 — Break the "stuck on grasp" V2.16 plateau by 5x-ing the dense
+# lift signal AND halving the binary lift threshold.
+#
+# Diagnostic V2.16 run 2026-05-11_20-11-35 at iter 357 (= iter 57 of resume):
+#   - Peaked at iter 320 (grasp 4.54, reach 1.20) then degraded to
+#     iter 357 (grasp 3.11, reach 1.14, gripper_orient -0.62 vs -0.12 at start).
+#   - cube_height_above_spawn plateau at 0.30 = ~0.34 mm sustained = pure
+#     grasp-contact noise. NEVER any real lift in 54 iters of training.
+#   - lifting_object = 0 throughout (z_rel > 0.08 m never reached).
+#   - PPO trapped : grasp +5 × 0.6 = +3/step is stable, lift attempt risks
+#     losing grasp without compensating signal (h_above = +0.3 reward).
+#
+# V2.17 = V2.16 + 2 changes (env-side, PPO unchanged):
+#   1. cube_height_above_spawn weight +30 → +150 (×5).
+#      At cap (cube 20 cm above spawn): per-step reward = 0.20 × 150 = +30/step.
+#      That's 6× the grasping_cube reward. Now PPO MUST lift to maximize.
+#      Even partial lift (1 cm) gives +1.5/step, comparable to grasp.
+#
+#   2. lifting_object binary threshold z_rel > 0.08 m → z_rel > 0.04 m.
+#      Cube spawn z_rel = 0.041 - base_z (~0.010) = 0.031 m. So 0.04 m means
+#      cube only needs to rise 9 mm above its current center to fire the
+#      binary. Same gating still applies (must be grasped). Allows the
+#      cascading reward chain (lifting_object +10 → object_goal_tracking +16
+#      → success +1500) to start propagating value much earlier.
+#      Same change applied to object_goal_tracking + fine_grained.
+#
+# Resume from V2.16 model_350 (latest, 2026-05-11_20-11-35 run): preserves
+# the established reach + grasp + top-down skills, just shifts the reward
+# landscape to motivate lift more strongly.
+# ---------------------------------------------------------------------------
+
+# V2.17 binary lift threshold (was 0.08 in V2.8.5+, halved here).
+_V217_LIFT_HEIGHT_THRESHOLD = 0.04
+
+
+@configclass
+class RewardsCfgV217(RewardsCfgV216):
+    """V2.17 — V2.16 + 5x boost on dense lift + half binary lift threshold.
+
+    Inherits RewardsCfgV216 (cube_height_above_spawn weight=30) and overrides:
+      - cube_height_above_spawn: 30 → 150 (×5 stronger gradient)
+      - lifting_object: height_threshold 0.08 → 0.04 (binary fires earlier)
+      - object_goal_tracking: same threshold change
+      - object_goal_tracking_fine_grained: same threshold change
+
+    All other terms inherit unchanged.
+    """
+
+    cube_height_above_spawn = RewTerm(
+        func=eval2_mdp.cube_height_above_spawn,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "spawn_z": 0.041,
+            "max_height": 0.20,
+        },
+        weight=150.0,   # V217: 30 → 150 (×5 boost)
+    )
+
+    lifting_object = RewTerm(
+        func=eval2_mdp.cube_lifted_and_grasped,
+        params={
+            "height_threshold": _V217_LIFT_HEIGHT_THRESHOLD,   # V217: 0.08 → 0.04
+            "diff_threshold": 0.04,
+            "grasp_threshold": 0.35,
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "robot_base_name": "base",
+        },
+        weight=10.0,
+    )
+
+    object_goal_tracking = RewTerm(
+        func=eval2_mdp.cube_to_goal_distance_grasped_and_lifted,
+        params={
+            "std": 0.3,
+            "height_threshold": _V217_LIFT_HEIGHT_THRESHOLD,   # V217: 0.08 → 0.04
+            "diff_threshold": 0.04,
+            "grasp_threshold": 0.35,
+            "command_name": "object_pose",
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "robot_base_name": "base",
+        },
+        weight=16.0,
+    )
+
+    object_goal_tracking_fine_grained = RewTerm(
+        func=eval2_mdp.cube_to_goal_distance_grasped_and_lifted,
+        params={
+            "std": 0.05,
+            "height_threshold": _V217_LIFT_HEIGHT_THRESHOLD,   # V217: 0.08 → 0.04
+            "diff_threshold": 0.04,
+            "grasp_threshold": 0.35,
+            "command_name": "object_pose",
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "robot_base_name": "base",
+        },
+        weight=5.0,
+    )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV217(LeIsaacLiftCubeRLEnvCfgV216):
+    """V2.17 state-only env — V2.16 + boosted dense lift + lower binary threshold."""
+
+    rewards: RewardsCfgV217 = RewardsCfgV217()
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV217_PLAY(LeIsaacLiftCubeRLEnvCfgV217):
+    """Smaller scene + no obs corruption for replaying a V2.17 checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV217(LeIsaacLiftCubeRLVisualEnvCfgV216):
+    """V2.17 visual env."""
+
+    rewards: RewardsCfgV217 = RewardsCfgV217()
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV217_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV217):
+    """Smaller scene + no obs corruption for replaying a V2.17 visual ckpt."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+# ===========================================================================
+# V2.18 — "Precision Landing" structural rewrite (Claude search design).
+#
+# Bounded-magnitude (|r|≤5 budget), multiplicatively-gated reward stack
+# that addresses all 7 prior failure modes simultaneously:
+#   - V2.7/V2.9 flick exploit          → lift_height_gated × strict_grasp
+#   - V2.13 v1 give-up exploit          → no fail-fast DoneTerm, clipped #1
+#   - V2.13 v2 sign-bug                 → position-based palm_to_jaw_orient_v218
+#   - V2.13 v3 bang-bang smash          → jaw_table_impact_penalty (NOT grasped)
+#   - V2.14 snake-horizontal            → palm_xy_above_cube + hover_height
+#   - V2.15 stuck-on-grasp              → lift_height_gated dense, multiplicative
+#   - V2.16/V2.17 VF blowup             → bounded weights, |r|≤5 budget
+#
+# Full design rationale, math, citations, risk runbook archived in
+# `notes/v218_design_claude_search.md` (raw Claude search artifact).
+#
+# Resume from V2.15 model_300 (clean baseline with reach+grasp+top-down
+# skills already learned; V2.18 just adds precision + lift gates).
+# ===========================================================================
+
+
+@configclass
+class RewardsCfgV218(RewardsCfgV215):
+    """V2.18 — bounded multiplicatively-gated reward (Claude search design).
+
+    Overrides ALL inherited terms to weight 0 except action_rate /
+    joint_vel (preserved from V2.14 calibration). Adds 5 new dense terms
+    + 1 new strict-grasp predicate term.
+
+    Per-step magnitude budget : net ∈ [−1.5, +6.3] (target +4.2 in
+    operation), keeping |V| ≤ 600 with γ=0.99 × 300 steps — safely inside
+    rsl_rl's stable adaptive-KL critic regime.
+    """
+
+    # ----------------- DENSE NEGATIVE (#1) -----------------
+    # Linear distance penalty, CLIPPED at 0.30 m. Override of V2.15
+    # ee_to_cube_distance (-3.0 V213v3 boost) → -1.0 with clipping.
+    ee_to_cube_distance = RewTerm(
+        func=eval2_mdp.ee_to_cube_distance_clipped,
+        params={
+            "object_cfg": SceneEntityCfg("cube"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "clip_max": 0.30,
+        },
+        weight=-1.0,
+    )
+
+    # ----------------- DENSE POSITIVE (#2) -----------------
+    # Isaac Lab canonical tanh reach. Override of V215 reach
+    # (weight=3.0 anti-suicide boost) → +1.0 with std=0.10 (canonical).
+    reaching_object = RewTerm(
+        func=lift_mdp.object_ee_distance,
+        params={
+            "std": 0.10,
+            "object_cfg": SceneEntityCfg("cube"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+        },
+        weight=1.0,
+    )
+
+    # ----------------- NEW DENSE POSITIVE (#3) -----------------
+    # Precision lateral alignment, gated palm > cube_top + 5 mm.
+    palm_xy_above_cube = RewTerm(
+        func=eval2_mdp.palm_xy_above_cube,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "std": 0.04,
+            "height_margin": 0.005,
+        },
+        weight=0.8,
+    )
+
+    # ----------------- NEW DENSE POSITIVE (#4) -----------------
+    # Gaussian hover bonus at 5 cm above cube, gated NOT grasped.
+    hover_height = RewTerm(
+        func=eval2_mdp.hover_height_gaussian,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "target_height": 0.05,
+            "sigma": 0.025,
+            "gripper_joint_name": "gripper",
+        },
+        weight=0.5,
+    )
+
+    # ----------------- BINARY MILESTONE (#5) -----------------
+    # Strict 6-condition grasp predicate (REPLACES V215 grasping_cube).
+    # V215's grasping_cube was a false-positive: fired when jaw was
+    # within 4 cm of cube + gripper closed, even if cube was BESIDE
+    # the jaws (visual confirmed on V215 model_300). Now requires
+    # full geometric containment.
+    grasping_cube = RewTerm(
+        func=eval2_mdp.cube_grasped_strict_float,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "gripper_joint_name": "gripper",
+        },
+        weight=2.0,
+    )
+
+    # ----------------- DENSE POSITIVE (#6) — MULTIPLICATIVELY GATED -----------------
+    # Bounded lift reward × strict_grasp. Replaces V215 lifting_object
+    # binary (z_rel > 0.08) with a continuous signal that can ONLY
+    # accumulate when strict_grasp is True.
+    # NB: spawn_z=0.0565 (empirically verified via dump_scene_frames on
+    # V218-Play env, 2026-05-12 — table top is at z≈0.0465 in world,
+    # cube center at 0.0565 at every reset (constant). The Claude
+    # search design doc said 0.041 but that was a stale value.
+    lifting_object = RewTerm(
+        func=eval2_mdp.lift_height_gated,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "spawn_z": 0.0565,
+            "max_lift": 0.10,
+            "gripper_joint_name": "gripper",
+        },
+        weight=1.5,
+    )
+
+    # ----------------- DENSE POSITIVE (#7) — DOUBLE-GATED -----------------
+    # Coarse goal tracking × strict_grasp × (cube_z > 0.08).
+    object_goal_tracking = RewTerm(
+        func=eval2_mdp.goal_tracking_gated,
+        params={
+            "std": 0.20,
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "command_name": "object_pose",
+            "min_lift_height": 0.08,
+            "gripper_joint_name": "gripper",
+        },
+        weight=1.0,
+    )
+
+    # ----------------- DENSE POSITIVE (#8) — DOUBLE-GATED -----------------
+    # Fine goal tracking × strict_grasp × (cube_z > 0.08).
+    object_goal_tracking_fine_grained = RewTerm(
+        func=eval2_mdp.goal_tracking_gated,
+        params={
+            "std": 0.04,
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "command_name": "object_pose",
+            "min_lift_height": 0.08,
+            "gripper_joint_name": "gripper",
+        },
+        weight=0.5,
+    )
+
+    # ----------------- DENSE POSITIVE (#9) — sign-FIXED -----------------
+    # Palm→jaw direction. NB: signature changed wrt V215 — V218 uses
+    # `-delta_norm.z` (rewards +1 when jaw below palm in world frame).
+    # MUST sign-verify via dump_scene_frames before launch (see risk
+    # runbook in design doc).
+    gripper_orientation_penalty = RewTerm(
+        func=eval2_mdp.palm_to_jaw_orient_v218,
+        params={"ee_frame_cfg": SceneEntityCfg("ee_frame")},
+        weight=0.3,    # NB: POSITIVE — palm_to_jaw_orient_v218 returns
+                       # +1 for top-down, -1 for gripper-up. So weight=+0.3
+                       # rewards top-down (+0.3) and penalizes up (-0.3).
+    )
+
+    # ----------------- DENSE NEGATIVE (#10) — NEW, gated -----------------
+    # Ramped jaw-near-table penalty, ONLY when not strictly grasping.
+    # Replaces V215 jaw_below_cube_penalty.
+    jaw_below_cube_penalty = RewTerm(
+        func=eval2_mdp.jaw_table_impact_penalty,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "safe_height": 0.06,
+            "gripper_joint_name": "gripper",
+        },
+        weight=-2.0,
+    )
+
+    # ----------------- DENSE NEGATIVE (#11–12) — preserved V2.14 -----------------
+    action_rate = RewTerm(
+        func=base_mdp.action_rate_l2,
+        weight=-0.01,                                          # V214: -1e-3 → V218: -0.01
+    )
+
+    joint_vel = RewTerm(
+        func=base_mdp.joint_vel_l2,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+        weight=-0.001,                                         # V214: -1e-3 → V218: -0.001
+    )
+
+    # ----------------- TERMINAL (T1) — success bonus with lift gate -----------------
+    success_bonus = RewTerm(
+        func=eval2_mdp.cube_at_goal_with_lift,
+        params={
+            "distance_threshold": 0.05,
+            "min_lift_height": 0.08,
+            "command_name": "object_pose",
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+        },
+        weight=2000.0,
+    )
+
+    # ----------------- DROPPED inherits from V213+ chain (overridden in env post_init) -----------------
+    # cube_dropped_penalty is set in env.__post_init__ in V2.13 onwards.
+    # We'll override the weight there to -50 (V218) instead of -30 (V215).
+
+    # ----------------- TURN OFF V215 LEGACY TERMS -----------------
+    # cube_height_above_spawn (V216) is in the inherited chain only
+    # at V216+; V218 inherits V215 so doesn't have it. Good.
+    # scoop_grasp_penalty (V213v3) already weight=0 in chain. Good.
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV218(LeIsaacLiftCubeRLEnvCfgV215):
+    """V2.18 state-only env — Precision Landing structural rewrite."""
+
+    rewards: RewardsCfgV218 = RewardsCfgV218()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # V218: cube_dropped_penalty weight -30 → -50 (per design doc T2).
+        self.rewards.cube_dropped_penalty = RewTerm(
+            func=eval2_mdp.cube_dropped_float,
+            params={
+                "world_z_threshold": 0.04,
+                "cube_cfg": SceneEntityCfg("cube"),
+            },
+            weight=-50.0,
+        )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV218_PLAY(LeIsaacLiftCubeRLEnvCfgV218):
+    """Smaller scene + no obs corruption for replaying a V2.18 checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV218(LeIsaacLiftCubeRLVisualEnvCfgV215):
+    """V2.18 visual env."""
+
+    rewards: RewardsCfgV218 = RewardsCfgV218()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.rewards.cube_dropped_penalty = RewTerm(
+            func=eval2_mdp.cube_dropped_float,
+            params={
+                "world_z_threshold": 0.04,
+                "cube_cfg": SceneEntityCfg("cube"),
+            },
+            weight=-50.0,
+        )
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV218_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV218):
+    """Smaller scene + no obs corruption for replaying a V2.18 visual ckpt."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+# ============================================================================
+# V2.18 b — anti-hover-stall variant
+# ============================================================================
+# Diagnosis from V2.18 cold run (2026-05-11_23-32-42, crashed at iter 415):
+#   - reach + alignment learned (palm_xy=0.62, hover=0.43 at iter 414)
+#   - grasp_strict NEVER fired in 414 iters → hover-stall confirmed
+#   - mean_reward plateau at ~14 from iter 350 onwards
+#   - VF blowup at iter 415 (0.009 → 68 → inf in 5 iters), classic
+#     pattern when policy has stagnated and an outlier transition
+#     produces a critic divergence cascade.
+#
+# V2.18b changes (paired with PPO entropy boost in
+# rsl_rl_ppo_cfg_v2_18b_cold.py):
+#   1. hover_height weight 0.5 → 0.2  (less reason to camp at hover sweet
+#      spot, opens budget for descent + grasp exploration).
+#   2. (PPO-side) entropy_coef 0.005 → 0.015 (keeps exploration alive
+#      longer, prevents premature commitment to hover-stall).
+#
+# Per-step magnitude budget recompute:
+#   max_pos = reach 1.0 + grasp 2.0 + lift 1.5 + goal 1.0 + fine 0.5
+#           + palm_xy 0.8 + hover 0.2 + orient 0.3 = +7.3
+#   Was +7.6 in V2.18, now +7.3 → still well within |r|≤8 stable regime.
+@configclass
+class RewardsCfgV218B(RewardsCfgV218):
+    """V2.18 b — V2.18 with three calibration fixes:
+
+    1. hover_height weight 0.5 → 0.2 (less hover-stall trap)
+    2. hover_height target_height 0.05 → 0.08 (CRITICAL — measured palm-jaw
+       offset in top-down is 9.3 cm, not 5 cm. Old peak put jaw 2.3 cm
+       BELOW the table, making strict_grasp geometrically impossible. New
+       peak puts palm at cube_top + 8 cm → jaw at cube_top - 1.3 cm =
+       inside the cube vertically, perfect for grasp).
+       See sim/eval2/scripts/verify_palm_jaw_offset.py for the
+       measurement (run on 2026-05-12).
+    3. jaw_below_cube_penalty safe_height 0.06 → 0.045 (so the table-
+       impact penalty doesn't fire at the new correct grasp position
+       where jaw is around z=0.05).
+    """
+
+    hover_height = RewTerm(
+        func=eval2_mdp.hover_height_gaussian,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "target_height": 0.08,    # was 0.05; calibrated for true 9.3cm offset
+            "sigma": 0.025,
+            "gripper_joint_name": "gripper",
+        },
+        weight=0.2,
+    )
+
+    jaw_below_cube_penalty = RewTerm(
+        func=eval2_mdp.jaw_table_impact_penalty,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "safe_height": 0.045,     # was 0.06; tightened to actual table level
+            "gripper_joint_name": "gripper",
+        },
+        weight=-2.0,
+    )
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV218B(LeIsaacLiftCubeRLEnvCfgV218):
+    """V2.18 b state-only env."""
+
+    rewards: RewardsCfgV218B = RewardsCfgV218B()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # Disable LeIsaac's HDF5 episode recorder. We don't need to log demos
+        # during PPO training, and a corrupted dataset.hdf5 (e.g. from a
+        # crashed concurrent process) detonates the run with
+        # "wrong B-tree signature" — burned us at iter 305 of the first
+        # V2.18b run on 2026-05-12.
+        from isaaclab.managers.recorder_manager import DatasetExportMode
+        self.recorders.dataset_export_mode = DatasetExportMode.EXPORT_NONE
+
+
+@configclass
+class LeIsaacLiftCubeRLEnvCfgV218B_PLAY(LeIsaacLiftCubeRLEnvCfgV218B):
+    """Smaller scene + no obs corruption for replaying a V2.18 b checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV218B(LeIsaacLiftCubeRLVisualEnvCfgV218):
+    """V2.18 b visual env."""
+
+    rewards: RewardsCfgV218B = RewardsCfgV218B()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # Same recorder disable as the state-only V218B (see comment there).
+        from isaaclab.managers.recorder_manager import DatasetExportMode
+        self.recorders.dataset_export_mode = DatasetExportMode.EXPORT_NONE
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV218B_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV218B):
+    """Smaller scene + no obs corruption for replaying a V2.18 b visual ckpt."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+
+
+# ============================================================================
+# V2.18 b PickLift — symmetric actor-critic, NO cube ground truth anywhere
+# ============================================================================
+# Motivation:
+#   At deploy on the real SO-101 we have only:
+#     - joint encoders (joint_pos, joint_vel)
+#     - wrist RGB camera
+#   No cube ground-truth position is available. The V218B Visual env had
+#   `object_position`, `ee_to_cube_vec`, `cube_to_goal_vec` in the actor
+#   obs — these are sim-only and break sim2real.
+#
+#   This variant restricts BOTH actor and critic to deployable obs only
+#   (joint_pos + joint_vel + ResNet-18 wrist features). Symmetric AC:
+#   actor and critic see exactly the same input. We deliberately do not
+#   give the critic any privileged signal — keeps the value estimate
+#   robust to the perception noise we'll add later, and avoids the value
+#   network learning to rely on info the deployed policy can't see.
+#
+# Inheritance:
+#   - Inherits all rewards, terminations, geometry, recorder disable from V218B
+#   - Only overrides `observations`
+#
+# Actor obs dim  : 6 + 6 + 512 = 524
+# Critic obs dim : 524 (same as actor)
+@configclass
+class PickLiftPolicyCfg(ObsGroup):
+    """V2.18b-picklift obs — proprioception + wrist features only.
+
+    Used as BOTH actor and critic input (symmetric AC).
+    Total: 6 (joint_pos) + 6 (joint_vel) + 512 (wrist_features) = 524 dims.
+    """
+
+    joint_pos = ObsTerm(func=base_mdp.joint_pos_rel)
+    joint_vel = ObsTerm(func=base_mdp.joint_vel_rel)
+    wrist_features = ObsTerm(
+        func=eval2_mdp.wrist_image_features,
+        params={"sensor_cfg": SceneEntityCfg("wrist")},
+    )
+
+    def __post_init__(self):
+        # Disable Gaussian corruption — the ResNet-18 features carry their
+        # own noise robustness, and joint_pos/vel from real SO-101 encoders
+        # have very low noise (sub-mm precision motors).
+        self.enable_corruption = False
+        self.concatenate_terms = True
+
+
+@configclass
+class ObservationsCfgV218BPickLift:
+    """V2.18b-picklift observation manager — single `policy` group used by
+    both actor and critic (symmetric AC, sim2real-clean).
+    """
+
+    policy: PickLiftPolicyCfg = PickLiftPolicyCfg()
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV218BPickLift(LeIsaacLiftCubeRLVisualEnvCfgV218B):
+    """V2.18b PickLift visual env — same rewards/geometry/recorder-disable
+    as V218B Visual, but minimal symmetric obs (no cube ground-truth
+    anywhere — actor and critic both see only proprioception + wrist
+    features).
+
+    Pair with `LiftCubePPORunnerCfgV218BPickLiftCold` PPO config which
+    sets `obs_groups = {"policy": ["policy"], "critic": ["policy"]}`.
+    """
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # The parent chain populates self.observations.policy with V218B's
+        # full obs set (joint_pos, joint_vel, object_position,
+        # target_object_position, actions, wrist_features,
+        # target_color_placeholder, bowl_xyz_placeholder, ee_to_cube_vec,
+        # cube_to_goal_vec). We replace the entire observation manager
+        # with our single-group symmetric-AC version.
+        self.observations = ObservationsCfgV218BPickLift()
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV218BPickLift_PLAY(
+    LeIsaacLiftCubeRLVisualEnvCfgV218BPickLift
+):
+    """Smaller scene for replaying a V2.18 b PickLift checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5

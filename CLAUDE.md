@@ -300,6 +300,14 @@ if a specific piece needs to be referenced.
   `C:\Users\user\Desktop\MA2\isaac\isaac_so_arm101`. That repo is a
   reference scaffold, kept clean for re-syncs. Project code goes in
   THIS repo's `sim/`.
+- **One exception — rsl_rl is patched.** A single one-line patch is
+  applied to
+  `C:\Users\user\Desktop\MA2\isaac\isaac_so_arm101\.venv\Lib\site-packages\rsl_rl\algorithms\ppo.py`
+  (LR floor 1e-5 → 1e-4) to prevent the optimizer-collapse cascade
+  observed in V2.18 cold. The patch is NOT tracked by git; re-apply
+  after any venv rebuild via:
+      `python sim/eval2/scripts/patch_rsl_rl.py`
+  The script is idempotent. See `notes/rsl_rl_patches.md` for context.
 - **All project code lives in this repo.** Layer 1 (Isaac Sim/Lab) and
   Layer 2 (`isaac_so_arm101`) stay outside.
 - **Before any real-robot deploy:** verify scene matches the recording

@@ -33,13 +33,31 @@ Estimation totale : ~10-15 jours de travail réel + ~5-10h GPU (~$30-80 Brev si 
 > lis tout cette section avant le reste du doc. Le reste est l'historique
 > détaillé.
 
-### Où on en est
+### Où on en est (mise à jour 2026-05-12)
 
-- **Variant actif** : **V2.15** (à lancer en cold-start). V2.14 + strict-top-down enforcement : rewrite `gripper_orientation_penalty` avec **palm→jaw direction** (catche horizontal/snake) + new `jaw_below_cube_penalty` (anti physics breach). Logs cibles : `logs/rsl_rl/lift_v2_13/<nouveau-timestamp>/`.
+- **Variant actif** : **V2.18 cold-start** (task `Isaac-LeIsaac-SO101-Lift-Visual-V218-cold-v0`). Structural rewrite du reward stack, cold-start sans resume. Lancé après l'échec du V2.18 resume (V2.15's faux-grasp policy ne pouvait pas trigger le strict_grasp predicate). ETA ~14-19h. Logs cibles : `logs/rsl_rl/lift_v2_13/<nouveau-timestamp>/`.
+
+- **V2.18 design** (Claude search artifact archivé dans [`notes/v218_design_claude_search.md`](v218_design_claude_search.md)) : "Precision Landing" — bounded-magnitude (|r|≤5 budget), multiplicatively-gated reward stack. 12 dense terms + 2 terminals. Réécriture COMPLÈTE du reward landscape pour adresser SIMULTANÉMENT les 7 failure modes V2.7→V2.17. Caractéristiques clés :
+  - **Strict grasp predicate** (6-condition geometric containment) qui REPLACE le loose `cube_grasped` predicate
+  - Tous les rewards de lift / goal sont **multiplicativement gated × strict_grasp** → "lift sans vrai grasp" mathématiquement impossible
+  - Toutes les weights dense ≤ 2.0 → per-step magnitude ≤ +6.3 → |V|≤600 (vs V2.17 |V|=4500 qui a crashé)
+  - Cube_z fix : empiriquement vérifié `spawn_z = 0.0565` (NON 0.041 comme l'ancien Claude doc supposait) via `dump_scene_frames` 2026-05-12
+
+- **V2.18 resume résultat (échec)** : run `2026-05-11_22-30-34`, resumed depuis V2.15 model_300. À iter 354 (= iter 54 du resume), `grasping_cube = 0` SUSTAINED (le strict predicate ne fire JAMAIS). Mean reward dégrade de -0.12 → +1.68 (peak iter 310) → -2.62 (iter 354). Cause : V2.15 ferme la pince **À CÔTÉ** du cube (visual confirmé) — le strict predicate exige cube ENTRE jaws → predicate jamais True → no positive grasp signal → policy s'éloigne du cube et perd skills. **Décision** : abandonner resume, cold-start V2.18.
+
+- **V2.17 résultat (failed via VF collapse)** : resume depuis V2.15 model_300 + cube_height_above_spawn weight ×5 (30→150) + lifting_object threshold halved (0.08→0.04). Peaked à iter 343 : `lifting_object = 8.50` PREMIÈRE FOIS NON-ZERO (cube briefly lifted >4cm above base), `mean_reward = 210`. MAIS Loss/value_function spike à 169 → catastrophic collapse à iter 448 : mean_reward -87% vs peak, grasp -83%, reach -53%. Same VF-blowup pattern que V2.13 v2.
+
+- **V2.16 résultat (échec — stuck/dégrade)** : resume depuis V2.15 model_300 + dense lift `cube_height_above_spawn` weight=+30. Peaked à iter 320 puis dégradation continue : `gripper_orientation_penalty` -0.12 → -0.62 (×5), grasp 4.54 → 3.11, lift toujours 0. Weight +30 trop faible pour dominer le grasp baseline (+4.2/step), mais juste assez pour pousser la policy à explorer des comportements de lift qui dégradent les compétences V2.15.
+
+- **V2.15 résultat (partial success, lift stuck)** : à iter 301, top-down posture confirmée (palm→jaw direction penalty marche), grasp 83% des steps via loose predicate, no scoop, no smash, drop 0%. Mean reward +46/ép. MAIS `lifting_object = 0` sustained de iter 100 à 301. **Visual replay révèle false grasp** : pince ferme à côté du cube — le `cube_grasped` predicate (jaw <4cm + closed) fire en faux positif. Time to first grasp 7.1 steps = 0.24s (trop rapide), 18/18 grasps end in grasp_LOST (89% ejection). V2.15 = reach OK + faux grasp + jamais de vrai contenu = jamais de lift.
+
 - **V2.14 résultat (mixed)** : à iter 100, Bang-Bang smash KILLED (max qdot 27→5 rad/s, tip below table 31%→0%), grasps plus sustained (147 steps mean). MAIS visual replay confirme **SNAKE/HORIZONTAL** : shoulder_lift +0.97 + wrist_flex +0.87 → bras extends low forward, jaws skim table at jaw_z=0.05m, approche cube latéralement. 98% steps en table-sliding, 0% LIFTING. Cause : `gripper_orientation_penalty` jaw-vs-palm-Z returns 0 en top-down ET en horizontal — policy a convergé sur horizontal par exploration luck. V2.15 corrige avec formule palm→jaw direction (catche snake).
+
 - **V2.13 v3 résultat (partial success)** : à iter 100, **50% phase GRASPED** (vs 0% V213v2) → sign-fix orient fonctionne, policy fait top-down, gripper-down sustained. MAIS Bang-Bang smash exploit : max |qdot| 75 rad/s (12× Feetech limit), table sliding 98%, time-to-first-grasp 0.33s, tip below table 31%, 0 lift. V214 a corrigé le smash.
+
 - **V2.13 v2 résultat (échec)** : crashé iter 128 VF blow-up. Surtout : **bug de SIGN dans `gripper_orientation_penalty`** — formule quat `1 + z_world.z` supposait local +z = direction des doigts, mais sur SO-101 local +z du frame "gripper" pointe VERS L'ARRIÈRE (confirmé `dump_scene_frames`). Récompensait gripper-UP. Convergé sur pose `shoulder_lift +1.745 max + wrist_flex -1.658 min + jaws UP, EE hover 17cm above cube`. 0% grasp.
-- **V2.13 v1 résultat (échec)** : give-up exploit à iter 0-50. 88% épisodes terminaient via `ee_far_from_cube` DoneTerm sans penalty associée. V2 a fixé v1.
+
+- **V2.13 v1 résultat (échec)** : give-up exploit à iter 0-50. 88% épisodes terminaient via `ee_far_from_cube` DoneTerm sans penalty associée. V2.13 v2 a fixé.
 - **V2.13 v2 fixes (4 changements)** : (1) REMOVE `ee_far_from_cube` DoneTerm (kill l'exploit channel), (2) `cube_dropped_penalty` -150→-30 (encore strong mais moins brutal), (3) `scoop_grasp_penalty` -10→-5 (allègement), (4) `reaching_object` weight +1.0→+1.5 (boost positif pour rendre baseline non-négative). gripper_orientation_penalty reste à -1.0.
 - **V2.12 résultat** : a tourné jusqu'iter 1000+, **converged on snake/scoop motor program** : grasp duration 86 steps (sustained), lifting démarrant à iter 300+, mais **pas de success** (cube éjecté en transport 60% du temps), gripper pointing UP at grasp (-0.27 score), jaw scraping table (5cm). Action saturation extreme (raw actions ±6 vs expected ±1 → vmax peak 21 rad/s vs Feetech limit 6 rad/s). Sim-to-real impossible. → V2.13 fixe ces deux pathologies.
 - **Tâche** : même que V2.12 (LeIsaac SO-101 lift cube to goal pose, 555D obs, V2.9 reward + V2.9 PPO + DELTA action). V2.13 ajoute 3 fixes pour forcer top-down arc trajectory + bornes vmax réelles.
@@ -100,7 +118,90 @@ Pourquoi ça marche : tanh(d/0.15) sature à d > 60cm, donnant 0 gradient à gra
 
 Notre scène LeIsaac a la table à `world_z ≈ 0.0415` (table élevée). Donc `world_z_threshold = 0.04` = "cube juste sous la table top" = "cube tombé". L'équivalent Isaac Lab Lift d'un threshold `-0.05` (où la table est à z=0) est notre `0.04`. Ne pas confondre les deux scènes.
 
-### Stack V2.15 (config actuelle, "Strict Top-Down")
+### Stack V2.18 (config actuelle, "Precision Landing", Claude search design)
+
+**Design source** : [`notes/v218_design_claude_search.md`](v218_design_claude_search.md) — output complet de Claude search (web search + reasoning) avec calculs de budget, citations, risk runbook. Lire CE doc avant toute intervention sur V2.18.
+
+**Philosophie** : un structural rewrite, PAS un tweak. Reward stack bounded magnitude (|r|≤5 budget dérivé de γ=0.99 × 300 steps geometric sum), multiplicativement gated, calibré pour cold-start E[return] négatif modéré (= no suicide-by-drop attractor).
+
+**Diff vs V2.15** (12 dense terms + 2 terminals, almost everything overridden) :
+
+- **NEW reward functions** dans [`sim/eval2/mdp/rewards.py`](../sim/eval2/mdp/rewards.py) :
+  - `cube_grasped_strict` (predicate, 6 conditions geometric containment)
+  - `cube_grasped_strict_float` (cast pour RewTerm)
+  - `ee_to_cube_distance_clipped` (linear, clip 0.30 m)
+  - `palm_xy_above_cube` (precision alignment, gated palm above cube_top)
+  - `hover_height_gaussian` (Gaussian σ=0.025 at h=0.05 above cube_top, gated NOT grasped)
+  - `lift_height_gated` (bounded × strict_grasp, spawn_z=**0.0565** empirique)
+  - `goal_tracking_gated` (× strict_grasp × cube_z>0.08)
+  - `palm_to_jaw_orient_v218` (sign-FIXED : `-delta_norm.z`, rewards +1 top-down)
+  - `jaw_table_impact_penalty` (ramped 0→1 over last 6cm, × NOT strict_grasp)
+  - `cube_at_goal_with_lift` (terminal success + lift gate)
+
+- **Strict grasp predicate** — les 6 conditions qui doivent toutes être True :
+  1. (a) palm strictly above cube_top by ≥ 1 cm
+  2. (b) jaw at or below cube_top (with 5 mm tolerance)
+  3. (c) jaw at or above cube_bottom (with 5 mm tolerance) — catches scoop
+  4. (d) cube xy within 1.5 cm of palm-jaw midpoint xy (lateral containment)
+  5. (e) gripper joint closed ≥ 70 % of travel
+  6. (f) cube xy-velocity < 0.50 m/s (cube not ejecting)
+
+  Le predicate IS the gate : tous les rewards de lift/goal sont multipliés × `cube_grasped_strict_float` → "lift without grasp" mathématiquement impossible.
+
+**Reward table V2.18** ([`leisaac_lift_env_cfg.py::RewardsCfgV218`](../sim/eval2/leisaac_lift_env_cfg.py)) :
+
+| # | name | weight | gating | role |
+|---|---|---|---|---|
+| 1 | `ee_to_cube_distance` (clipped 0.30 m) | **-1.0** | always | non-saturating EE→cube driver, clip bounds cold-start cost |
+| 2 | `reaching_object` (tanh std=0.10) | **+1.0** | always | Isaac Lab canonical reach |
+| 3 | `palm_xy_above_cube` (tanh std=0.04) | **+0.8** | palm > cube_top + 5 mm | precision lateral landing |
+| 4 | `hover_height` (Gaussian σ=0.025 at h=0.05) | **+0.5** | aligned ∧ NOT strict_grasp | hover 5 cm above cube |
+| 5 | `grasping_cube` (= strict predicate) | **+2.0** | (predicate IS gate) | true geometric containment |
+| 6 | `lifting_object` (bounded × strict_grasp) | **+1.5** | × strict_grasp (multiplicative) | partial lift signal |
+| 7 | `object_goal_tracking` (std=0.20) | **+1.0** | × strict_grasp × (cube_z>0.08) | coarse goal pull |
+| 8 | `object_goal_tracking_fine_grained` (std=0.04) | **+0.5** | × strict_grasp × (cube_z>0.08) | fine goal pull |
+| 9 | `gripper_orientation_penalty` (palm→jaw, sign-FIXED) | **+0.3** | always | top-down posture nudge |
+| 10 | `jaw_below_cube_penalty` (ramped) | **-2.0** | × NOT strict_grasp | anti-table-smash before grasp |
+| 11 | `action_rate` | -0.01 | always | smoothness |
+| 12 | `joint_vel` | -0.001 | always | smoothness |
+| T1 | `success_bonus` (+ lift gate) | **+2000** | terminal (5 cm distance ∧ cube_z>0.08) | one-shot |
+| T2 | `cube_dropped_penalty` (terminal) | **-50** | terminal | discourage drop |
+
+Per-step ceiling **+6.3** (grasp phase max) / **-1.5** (cold-start dense). |V|≤600 with γ=0.99 — safely inside rsl_rl adaptive-KL stable regime.
+
+**Geometry empiriquement vérifiée 2026-05-12** (via dump_scene_frames sur env V218-Play) :
+- Cube center z au spawn = **0.0565** (PAS 0.041 comme V2.10+ doc supposait — V218 fix applique 0.0565)
+- Cube top = 0.0665, Cube bottom = 0.0465 (= table top en monde)
+- palm.z home = 0.2769, jaw.z home = 0.2761 → `delta.z = -0.0008` (palm très légèrement above jaw en home horizontal)
+- En top-down (jaw 5 cm sous palm) : `delta.z = -0.05` → `-delta_norm.z = +1` → reward +0.3 max (sign correct ✓)
+
+**Action class** : `RelativeJointPositionActionCfg(scale=0.10, clip={".*":(-1,1)})` — vmax 3 rad/s (héritage V214).
+
+**Episode** : 10 s = 300 steps (héritage V214).
+
+**PPO config V218 cold** : [`agents/rsl_rl_ppo_cfg_v2_18_cold.py::LiftCubePPORunnerCfgV218Cold`](../sim/eval2/agents/rsl_rl_ppo_cfg_v2_18_cold.py) — V2.9 baseline (gamma 0.99, init_noise 1.0, entropy 0.005, desired_kl 0.02, lr 1e-3 adaptive). PPO unchanged depuis V2.13.
+
+**Cold-start REQUIS** : V2.18 resume depuis V2.15 model_300 a échoué (run 22-30-34) parce que V2.15's faux-grasp policy ne peut pas trigger le strict predicate → no positive grasp signal → policy dégrade. Cold-start = clean slate. ETA ~14-19h.
+
+**Cibles V2.18 cold** (du design doc runbook) :
+
+| iter | mean_reward | grasp_strict | lift fraction | success |
+|---|---|---|---|---|
+| 100 | -10 to +50 | 0.05 | 0 | 0 |
+| 300 | +50 to +200 | 0.20 | 0.02 | 0 |
+| 500 | +200 | 0.40 | 0.10 | 0.05 |
+| 1000 | +1000 | 0.70 | 0.50 | 0.45 |
+| 1500 | +2200 | 0.85 | 0.75 | **0.75** |
+
+**Drapeaux à monitorer** (du design doc) :
+- `loss/value_function` NE doit PAS doubler en 30 iters → si oui ABORT (V2.13v2 et V2.17 ont crashé sur ce pattern)
+- `mean_value` doit rester ∈ [20, 500]
+- `noise_std` doit baisser monotone vers ~0.3
+- Si à iter 200, `palm_xy_above_cube > 0.4` ET `grasp_strict = 0` → predicate trop strict, loosen condition (d) lateral 0.015 → 0.025
+
+**Sim2real concern** : V2.18 observation utilise `object_position` (3D), `ee_to_cube_vec` (3D), `cube_to_goal_vec` (3D) = 9/555 dims **privileged** (pas disponibles directement sur le robot réel via wrist cam). Stratégie planifiée pour deploy : (1) valider V2.18 convergence en sim, (2) train perception CNN séparé (wrist_cam → cube_xyz), (3) chain perception + policy au deploy. OU alternative : retrain V2.19 avec Gaussian noise σ=2cm sur object_position pendant training pour robustesse.
+
+### Stack V2.15 (legacy — "Strict Top-Down")
 
 **Diff vs V2.14** (2 changements env-side, PPO unchanged) :
 
@@ -370,26 +471,25 @@ Pourquoi : MLP `[256,128,128]` doit normalement apprendre la soustraction `cube 
 > - Les logs vont dans **`C:\Users\user\Desktop\MA2\robot-learning-project3\logs\rsl_rl\lift_v2_13\<timestamp>\`** (NOT dans `isaac_so_arm101\logs\` — ce path est l'ancien, abandonné dès V2.13).
 > - `$env:RUST_LOG = "error"` mute les warnings wgpu/Vulkan spammy quand `--display_data=true` ou cameras actives.
 
-**Train V2.15 (cold-start, CURRENT) — terminal 1** :
+**Train V2.18 cold-start (CURRENT) — terminal 1** :
 ```powershell
 cd C:\Users\user\Desktop\MA2\robot-learning-project3
 $env:RUST_LOG = "error"
 C:/Users/user/Desktop/MA2/isaac/isaac_so_arm101/.venv/Scripts/python.exe `
   sim/eval2/scripts/train.py `
-  --task Isaac-LeIsaac-SO101-Lift-Visual-V215-v0 `
+  --task Isaac-LeIsaac-SO101-Lift-Visual-V218-cold-v0 `
   --headless --enable_cameras --num_envs 256
 ```
-ETA ~14-19h pour 1500 iter sur RTX 5070 (same shape as V214).
+**PAS de `--resume`** — V2.18 cold est conçu pour cold-start. Le PPO config `LiftCubePPORunnerCfgV218Cold` n'a pas de `load_run` / `load_checkpoint`. ETA ~14-19h pour 1500 iter.
 
-**Resume V214 depuis un checkpoint** (si arrêté en cours) :
-```powershell
-... sim/eval2/scripts/train.py --task Isaac-LeIsaac-SO101-Lift-Visual-V214-v0 `
-  --headless --enable_cameras --num_envs 256 `
-  agent.resume=true agent.load_run=<timestamp> agent.load_checkpoint=model_N.pt
-```
+**Resume Hydra "trick" pour les futures versions** : pour résumer un checkpoint, il faut **OBLIGATOIREMENT** passer `--resume` sur la CLI (Isaac Lab's `cli_args.update_rsl_rl_cfg` overwrite `agent_cfg.resume` avec `args_cli.resume` qui défaut False — un bug de la lib). Voir `rsl_rl_ppo_cfg_v2_18_resume.py` pour exemple de hardcoded resume config (mais user doit toujours passer `--resume` quand même).
 
 **Legacy archives (NE PAS relancer)** :
-- V2.14 : snake-mode (gripper horizontal, jaws slide table, 0 lift) — fix sign OK mais Z-only penalty laisse passer horizontal
+- V2.18 resume : V2.15's faux-grasp policy ne peut pas trigger le strict predicate, run dégrade
+- V2.17 : VF blowup à iter 343 (Loss/value spike 119), collapse à iter 448
+- V2.16 : weight cube_height_above_spawn=+30 trop faible, peaked iter 320 puis dégrade gripper_orient
+- V2.15 : grasp 83% MAIS faux positifs (pince ferme à côté), 18/18 grasps end in ejection
+- V2.14 : snake-mode (gripper horizontal, jaws slide table, 0 lift)
 - V2.13 v3 : Bang-Bang smash (jaws crash table, 75 rad/s, 0 lift)
 - V2.13 v2 : sign-bug `gripper_orientation_penalty`, converged gripper-UP
 - V2.13 v1 : give-up exploit via `ee_far_from_cube` DoneTerm
@@ -583,6 +683,10 @@ V2.12 = V2.9 reward+PPO + delta action. V2.9 atteignait 30% success deterministi
 | Reward landscape avec time-pressure forte sans speed cap → Bang-Bang vertical | Avec `ee_to_cube_distance` à -3.0 et action.scale 0.20 (vmax 6 rad/s), PPO trouve qu'il vaut mieux foncer plein pot vers le cube en 2-3 steps (coût total -10) que descendre lentement (coût -100+ sur 30 steps). Résultat : jaws smash sur la table à 75 rad/s, cube éjecté au choc, 0 lift. **Fix** : (a) `action.scale 0.20 → 0.10` (hard cap vmax 3 rad/s), (b) `episode_length_s 5 → 10` (lent OK), (c) `joint_vel_l2 & action_rate_l2 ×10` (soft penalty). V2.14 applique les 3. | V2.13 v3 |
 | Orientation penalty Z-only (`clamp((jaw_z - palm_z)/0.05, min=0)`) ne catche pas le snake horizontal | Returns 0 quand jaw BELOW palm en Z (top-down OK) MAIS aussi 0 quand jaw BESIDE palm at same z (snake horizontal). Deux optima zero-penalty cohabitent → PPO peut converger sur snake par exploration luck. V2.14 visual replay confirme : policy converged on snake/horizontal. **Fix** : utiliser la DIRECTION du vecteur palm→jaw normalisée (formula `1 + delta_norm.z`), pas la composante Z seulement. Catche top-down (=0), horizontal (=1), gripper-up (=2). V2.15 applique. | V2.14 |
 | Penalties brutales à cold-start (drop=-150, scoop=-10) sans positive reward strong proche | baseline `Σreward/ép` négative = -200/ép → policy préfère terminer plutôt que d'explorer → no-op + give-up. V2.13 v2 calibre : drop=-30, scoop=-5, ET boost reaching à +1.5 pour rendre baseline non-négative. | V2.13 v1 |
+| Reward chain avec milestone BINAIRE et pas de dense gradient pour le partial progress | V2.15 a `lifting_object` binaire (z_rel > 0.08m) avec weight=+10 et `grasping_cube` dense +5 toujours actif. Policy stuck sur "grasp-only" 200 iters parce que (a) +4.2/step grasp est confortable, (b) essayer de lift = risque de perdre le grasp, (c) pas de signal entre "cube sur table" et "cube 8cm above". **Fix** : ajouter une formule LINÉAIRE continue qui récompense partial lift dès le 1er mm (ex `clamp(cube.z - spawn_z, min=0, max=0.20) × +30` ou similaire). V2.16 applique. | V2.15 |
+| Loose `cube_grasped` predicate (jaw <4cm + closed) = faux positifs | Fire MÊME quand cube est BESIDE jaws (visual V2.15 model_300 confirmé : pince ferme à côté du cube, predicate fire quand même, 0% lift parce que cube pas vraiment contenu). 18/18 grasps end in grasp_LOST par ejection. **Fix** : strict 6-condition predicate (V2.18 `cube_grasped_strict`) qui exige geometric containment cube ENTRE jaws + palm above + gripper closed 70% + cube velocity bounded. | V2.15 |
+| Reward weights non bornés → VF blowup (PPO instability) | V2.17 `cube_height_above_spawn` weight +150 × max height 0.20 = +30/step → V target ≈ 4500 → adaptive-KL controller blind to critic divergence → Loss/value_function spike 119 → catastrophic collapse iter 343→448 (-87% mean_reward). Same pattern V2.13v2 crashed at VF=inf iter 128. **Fix** : tous les dense rewards bornés [0, 1] via clamp / normalize, weights ≤ 2.0, per-step |r| ≤ 5 budget → |V| ≤ 500 (rsl_rl stable regime). V2.18 applique. Référence : Engstrom et al., ICLR 2020 ; Sun et al., NeurIPS 2023. | V2.13v2, V2.17 |
+| Resume cross-version reward avec strict predicate sur policy à faux-grasp | V2.18 resume depuis V2.15 model_300 : V2.15's policy ferme la pince à côté du cube (faux-grasp), donc V2.18's strict predicate ne fire JAMAIS → no positive grasp signal → policy dégrade (mean_reward -2.62 à iter 354 du resume). **Lesson** : un nouveau strict predicate ne peut pas être resumé sur une policy qui n'a jamais satisfait ce predicate avant. Cold-start nécessaire dans ce cas (même si plus lent). | V2.18 resume |
 
 ### Variants disponibles (gym registers)
 
@@ -604,7 +708,11 @@ v18  V2.13 v1 (V2.12 + clip + gripper_orientation_penalty=-1 + scoop_grasp_penal
 v18  V2.13 v2 (v1 + REMOVE ee_far_from_cube + drop=-30 + scoop=-5 + reaching=+1.5) — FAILED stuck reach-only + sign-bug
 v19  V2.13 v3 (v2 + rewrite gripper_orientation_penalty position-based weight=-5 + DROP scoop + BOOST reach=+3 + BOOST ee_to_cube=-3) — FAILED Bang-Bang smash
 v20  V2.14 (v3 + episode 10s + scale 0.10 + joint_vel/action_rate ×10) — FAILED snake-mode
-v21  V2.15 (v14 + palm→jaw direction orient_penalty + jaw_below_cube_penalty=-50) — CURRENT, à lancer
+v21  V2.15 (v14 + palm→jaw direction orient_penalty + jaw_below_cube_penalty=-50) — FAILED stuck-on-grasp local opt at iter 301
+v22  V2.16 (v15 + cube_height_above_spawn dense lift reward weight=+30) — FAILED: stuck/dégrade
+v23  V2.17 (v16 + cube_height_above_spawn ×5 +150 + lift threshold halved 0.04) — FAILED: VF blowup at iter 343, collapse at 448
+v24  V2.18 resume (Precision Landing structural rewrite, resume V2.15 model_300) — FAILED: strict predicate never fires on V2.15 faux-grasp policy
+v25  V2.18 cold (same env, cold-start, gym ID `V218-cold-v0`) — CURRENT, à lancer overnight
 ```
 
 Chaque variante a 4 tasks : `RL-vN-v0`, `RL-vN-Play-v0`, `Visual-vN-v0`, `Visual-vN-Play-v0` (Play = 50 envs + no obs corruption).
@@ -630,6 +738,10 @@ sim/eval2/
 │   ├── rsl_rl_ppo_cfg_v2_5.py through _v2_11.py    # PPO configs per variant
 │   ├── rsl_rl_ppo_cfg_v2_12.py                     # V2.12 (= V2.9 baseline + DELTA action)
 │   ├── rsl_rl_ppo_cfg_v2_13.py                     # V2.13 (= V2.12 PPO unchanged, env-side fixes only)
+│   ├── rsl_rl_ppo_cfg_v2_16_resume.py              # V2.16 resume from V2.15 model_300 (failed)
+│   ├── rsl_rl_ppo_cfg_v2_17_resume.py              # V2.17 resume from V2.15 model_300 (collapsed at iter 448)
+│   ├── rsl_rl_ppo_cfg_v2_18_resume.py              # V2.18 resume from V2.15 model_300 (strict predicate never fired, abandoned)
+│   ├── rsl_rl_ppo_cfg_v2_18_cold.py                # V2.18 cold-start (CURRENT)
 │   └── rsl_rl_ppo_cfg_isaac_defaults.py
 └── scripts/
     ├── train.py                               # wraps isaac_so_arm101.scripts.rsl_rl.train
