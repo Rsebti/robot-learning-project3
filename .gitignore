@@ -224,6 +224,10 @@ __marimo__/
 *.webp
 document_pdf.pdf
 
+# Local-only checkpoints downloaded from the training box for inference
+train/checkpoints/
+outputs/
+
 # Perception module — heavy binaries and locally-generated previews
 sim/eval2/perception/data.pt
 sim/eval2/perception/checkpoint.pt

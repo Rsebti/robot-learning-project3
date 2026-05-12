@@ -18,7 +18,7 @@
 
 **Behavior expected from Claude:**
 - The user is intermediate now (just shipped a full BC pipeline) but **new to Isaac Lab + RL applied to robotics**. Be concrete, step-by-step, no skipped steps.
-- Communicate in French; keep code/technical terms in English.
+- Communicate in English. Code/technical terms stay in English (no change).
 - The user codes on Windows (PowerShell), pushes via GitHub Desktop. Watch for the Windows-specific gotchas listed below.
 - **Do NOT auto-run training/deploy commands without confirmation** — these involve the real robot or paid GPU time.
 
@@ -163,7 +163,7 @@ These bit us during the laptop session — keep them in mind for any future reco
 - No skipped steps in explanations.
 - Visuals/widgets useful for spatial or statistical intuition.
 - The user codes on Windows (PowerShell), GitHub Desktop for git, edits with VS Code.
-- Communication mostly in French, but technical terms and code in English.
+- Communication in English. Technical terms and code in English.
 - The user is OK with you running read-only commands and small clean-up commands (e.g. `Remove-Item` for stale lerobot caches), but **always ask before touching the real robot, before launching paid GPU runs (Brev), and before any push to HF that affects shared state**.
 
 ---
