@@ -259,7 +259,7 @@ def main():
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
     cv2.putText(vis, f"base xy = ({point[0]:+.3f}, {point[1]:+.3f}) m",
                 (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-    out_dir = Path(__file__).parent / "figs"
+    out_dir = Path(__file__).parent / "figs" / "debug" / "cv_detection"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"cube_detect_ep{args.episode:03d}_f{args.frame:03d}.png"
     cv2.imwrite(str(out_path), vis)

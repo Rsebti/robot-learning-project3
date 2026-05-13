@@ -203,7 +203,7 @@ def main():
         text = f"ep {ep_idx:03d}  target={target}  detected={color}  area={int(area)}"
         cv2.putText(vis, text, (8, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, banner_color, 2)
-        out_dir = Path(__file__).parent / "figs" / "eval_2_debug"
+        out_dir = Path(__file__).parent / "figs" / "debug" / "eval2_color_check"
         out_dir.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(out_dir / f"ep_{ep_idx:03d}.png"), vis)
 

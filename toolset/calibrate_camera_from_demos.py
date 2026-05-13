@@ -250,7 +250,7 @@ def main():
     ax.legend()
     ax.set_aspect("equal")
     ax.grid(alpha=0.3)
-    plot_path = Path(__file__).parent / "figs" / "calibration_residuals.png"
+    plot_path = Path(__file__).parent / "figs" / "debug" / "calibration_residuals.png"
     plot_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(plot_path, dpi=150, bbox_inches="tight")
     print(f"[calib] Saved -> {plot_path}")

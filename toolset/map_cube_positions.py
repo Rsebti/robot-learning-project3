@@ -207,7 +207,7 @@ def main():
     ax.set_aspect("equal")
     ax.legend(loc="best", framealpha=0.9)
 
-    png_path = Path(__file__).parent / "figs" / "cube_position_map.png"
+    png_path = Path(__file__).parent / "figs" / "positions" / "eval1_map.png"
     png_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(png_path, dpi=150, bbox_inches="tight")
     print(f"[map] Saved plot  -> {png_path}")
