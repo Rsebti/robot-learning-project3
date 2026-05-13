@@ -18,8 +18,14 @@ REPO_ID="${REPO_ID:-osammotg1/projet3-eval2-v1}"
 EPISODES_PER_TARGET="${EPISODES_PER_TARGET:-5}"
 EPISODES_PER_TARGET_EXTRA="${EPISODES_PER_TARGET_EXTRA:-2}"
 EPISODE_TIME_S="${EPISODE_TIME_S:-30}"
-RESET_TIME_S="${RESET_TIME_S:-5}"
+RESET_TIME_S="${RESET_TIME_S:-8}"
 FPS="${FPS:-30}"
+
+# Bowl position (cm, in the robot frame). Embedded in the task string so the
+# policy sees it as goal-conditioning input. Override per session if the bowl
+# is moved.
+BOWL_POS_X="${BOWL_POS_X:--15.5}"
+BOWL_POS_Y="${BOWL_POS_Y:-29.5}"
 
 DATASET_ROOT="${DATASET_ROOT:-${HOME}/.lerobot-data/${REPO_ID}}"
 
@@ -64,6 +70,7 @@ echo "##  Phase 1 (main):    ${main_pairs} pairs × 2 targets × ${EPISODES_PER_
 echo "##  Phase 2 (missing): ${extra_pairs} pairs × 2 targets × ${EPISODES_PER_TARGET_EXTRA} demos = $(( extra_pairs * 2 * EPISODES_PER_TARGET_EXTRA ))"
 echo "##  Total batches:  ${total_batches}    Total episodes: ${total_eps}"
 echo "##  Dataset: ${REPO_ID}"
+echo "##  Bowl position (cm): x=${BOWL_POS_X}  y=${BOWL_POS_Y}"
 echo "############################################################"
 
 batch_idx=0  # number of completed lerobot-record invocations (controls --resume flag)
@@ -160,7 +167,7 @@ record_phase() {
           --dataset.fps="${FPS}" \
           --dataset.episode_time_s="${EPISODE_TIME_S}" \
           --dataset.reset_time_s="${RESET_TIME_S}" \
-          --dataset.single_task="Pick ${target_color} block and place in bowl" \
+          --dataset.single_task="Pick ${target_color} block and place in bowl at (${BOWL_POS_X},${BOWL_POS_Y}) cm" \
           --dataset.private=true \
           --dataset.push_to_hub=true \
           --dataset.streaming_encoding="${STREAMING_ENCODING}" \

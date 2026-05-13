@@ -19,11 +19,21 @@
 #   EPISODES_PER_COLOR=2 bash teleop/record_eval1_bowl1.sh    # smoke test (10 demos)
 #   COLORS=yellow,blue,green,red EPISODES_PER_COLOR=10 bash teleop/record_eval1_bowl1.sh
 #   MONITOR=true bash teleop/record_eval1_bowl1.sh            # live FPS health alert
+#
+# Appending to an existing dataset (do NOT wipe the local root, always resume):
+#   RESUME=true EPISODES_PER_COLOR=20 EPISODES_ORANGE=10 bash teleop/record_eval1_bowl1.sh
+#
+# Per-color episode override: set EPISODES_<COLOR> (uppercase) for any color in
+# the COLORS list. Falls back to EPISODES_PER_COLOR. Example: EPISODES_ORANGE=10
+# records 10 orange episodes while everything else uses EPISODES_PER_COLOR.
 
 set -euo pipefail
 
 REPO_ID="${REPO_ID:-osammotg1/projet3-eval1-bowl1-v1}"
 EPISODES_PER_COLOR="${EPISODES_PER_COLOR:-8}"
+# RESUME=true: append to an existing dataset. Never wipes the local root or HF
+# cache, and forces --resume=true on every color batch.
+RESUME="${RESUME:-false}"
 EPISODE_TIME_S="${EPISODE_TIME_S:-55}"
 RESET_TIME_S="${RESET_TIME_S:-5}"
 FPS="${FPS:-30}"
@@ -73,13 +83,35 @@ DISPLAY_FLAGS=""
 
 export RUST_LOG=error  # silence wgpu/rerun spam
 
-TOTAL_DEMOS=$(( ${#COLORS[@]} * EPISODES_PER_COLOR ))
+# Per-color totals respect EPISODES_<COLOR> overrides; fall back to EPISODES_PER_COLOR.
+TOTAL_DEMOS=0
+for _c in "${COLORS[@]}"; do
+  _CU=$(echo "$_c" | tr '[:lower:]' '[:upper:]')
+  _VN="EPISODES_${_CU}"
+  TOTAL_DEMOS=$(( TOTAL_DEMOS + ${!_VN:-${EPISODES_PER_COLOR}} ))
+done
+unset _c _CU _VN
+
+# Build a "yellow=20 blue=20 ... orange=10" string for the banner.
+PER_COLOR_SUMMARY=""
+for _c in "${COLORS[@]}"; do
+  _CU=$(echo "$_c" | tr '[:lower:]' '[:upper:]')
+  _VN="EPISODES_${_CU}"
+  PER_COLOR_SUMMARY="${PER_COLOR_SUMMARY}${_c}=${!_VN:-${EPISODES_PER_COLOR}} "
+done
+unset _c _CU _VN
+
+MODE_STR="FRESH (will wipe local root on first color)"
+if [ "${RESUME}" = "true" ]; then
+  MODE_STR="RESUME (appending to existing dataset, no wipe)"
+fi
 
 echo ""
 echo "############################################################"
 echo "##  EVAL 1 — BOWL POSITION ${BOWL_POS_ID}  (x=${BOWL_X_CM} cm, y=${BOWL_Y_CM} cm)"
+echo "##  Mode:     ${MODE_STR}"
 echo "##  Colors:   ${COLORS[*]}"
-echo "##  Per color: ${EPISODES_PER_COLOR} episodes"
+echo "##  Per color: ${PER_COLOR_SUMMARY}"
 echo "##  TOTAL:    ${TOTAL_DEMOS} demos"
 echo "##  Dataset:  ${REPO_ID}"
 echo "############################################################"
@@ -110,9 +142,13 @@ for i in "${!COLORS[@]}"; do
     fi
   fi
 
+  # Per-color episode count: EPISODES_<COLOR> overrides EPISODES_PER_COLOR.
+  VARNAME="EPISODES_${COLOR_UPPER}"
+  EPISODES_THIS_COLOR="${!VARNAME:-${EPISODES_PER_COLOR}}"
+
   echo ""
   echo "########################################################"
-  printf "##  STEP %d/%d — COLOR: %s  (%d episodes)\n" "$step" "${#COLORS[@]}" "$COLOR_UPPER" "$EPISODES_PER_COLOR"
+  printf "##  STEP %d/%d — COLOR: %s  (%d episodes)\n" "$step" "${#COLORS[@]}" "$COLOR_UPPER" "$EPISODES_THIS_COLOR"
   echo "##  Place the $COLOR_UPPER cube on the table."
   echo "##  Bowl stays at position ${BOWL_POS_ID} (${BOWL_X_CM} cm right, ${BOWL_Y_CM} cm forward). Do NOT move it."
   echo "##  During each ${RESET_TIME_S}s reset window, MOVE the cube to a new (x, y)."
@@ -120,9 +156,10 @@ for i in "${!COLORS[@]}"; do
   echo ""
   read -rp "Press ENTER when scene is ready..."
 
-  # Resume on all but the very first color of a fresh run.
+  # Resume if: (a) any color past the first of a fresh run, (b) START_FROM
+  # was set (partial-run resume), or (c) RESUME=true (appending to existing).
   RESUME_FLAG=""
-  if [ "$i" -gt 0 ] || [ -n "${START_FROM}" ]; then
+  if [ "$i" -gt 0 ] || [ -n "${START_FROM}" ] || [ "${RESUME}" = "true" ]; then
     RESUME_FLAG="--resume=true"
   else
     if [ -d "${DATASET_ROOT}" ]; then
@@ -151,7 +188,7 @@ for i in "${!COLORS[@]}"; do
       --display_data=true \
       --dataset.repo_id="${REPO_ID}" \
       --dataset.root="${DATASET_ROOT}" \
-      --dataset.num_episodes="${EPISODES_PER_COLOR}" \
+      --dataset.num_episodes="${EPISODES_THIS_COLOR}" \
       --dataset.fps="${FPS}" \
       --dataset.episode_time_s="${EPISODE_TIME_S}" \
       --dataset.reset_time_s="${RESET_TIME_S}" \
