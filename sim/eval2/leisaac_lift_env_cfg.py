@@ -3283,3 +3283,276 @@ class LeIsaacLiftCubeRLVisualEnvCfgV218BPickLift_PLAY(
         super().__post_init__()
         self.scene.num_envs = 50
         self.scene.env_spacing = 2.5
+
+
+# ============================================================================
+# V2.19 — full rewrite per notes/v219_reward_search_claude.md (CoRL/RSS/ICLR
+# 2022-2026 synthesis: contact-impulse grasp, milestone bonuses, dual-scale
+# tracking, DrEureka safety cocktail, positive success terminal)
+# ============================================================================
+# Key changes from V2.18b:
+#   - Grasp predicate: 6-AND geometric -> contact-impulse on jaw + gripper
+#   - Add ContactSensors on `gripper` and `jaw` bodies (filtered to cube)
+#   - Drop terminal: -50 -> 0 (early termination only, no penalty)
+#   - Success terminal: +2000 -> +15 (bounded shaping principle)
+#   - Add one-time milestone bonuses for first grasp + first lift
+#   - Add finger-straddle geometric bonus
+#   - Replace gripper_orientation_penalty with bounded quaternion tracking
+#   - Add DrEureka safety: torque, work, qlimit, close-no-contact
+#   - action_rate / joint_vel weights -> Isaac Lab default 1e-4 each
+#   - Goal tracking: dual-scale (coarse std=0.30 + fine std=0.05), gated
+#     on lift only (not on grasp) so signal is robust to contact jitter
+#
+# Per-step max budget (rough):
+#   reach 1.0 + reach_fine 0.5 + straddle 0.5 + orient 1.0 = +3.0 ungated
+#   + lift 5.0 + goal_coarse 16 + goal_fine 5 = +26 when grasp+lifted
+#   - safety stuff ~ -0.5 max
+#   one-time: grasp_milestone +2.0, lift_milestone +5.0, success +15
+#
+# Per-episode optimal cumulative ~3000-4000 (vs V2.18b's ~3000), still
+# well within the |V| ≤ 1000 critic regime with γ=0.99 and 300 steps.
+
+import isaaclab.sim as sim_utils  # for ContactSensorCfg below
+from isaaclab.sensors import ContactSensorCfg
+
+
+@configclass
+class RewardsCfgV219:
+    """V2.19 reward stack — fresh, doesn't inherit V2.x terms.
+
+    Composition follows section 2.11 of v219_reward_search_claude.md, adapted
+    to SO-101's single-articulated-jaw geometry (antipodal contact stickers
+    skipped; finger-straddle uses palm vs jaw Z instead).
+    """
+
+    # --- Reach (dual-scale tanh, bounded) ----------------------------------
+    reaching_object = RewTerm(
+        func=eval2_mdp.reach_coarse_v219,
+        params={
+            "object_cfg": SceneEntityCfg("cube"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "std": 0.10,
+        },
+        weight=1.0,
+    )
+    reaching_fine = RewTerm(
+        func=eval2_mdp.reach_fine_v219,
+        params={
+            "object_cfg": SceneEntityCfg("cube"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "std": 0.02,
+        },
+        weight=0.5,
+    )
+
+    # --- Geometric pre-grasp posture ---------------------------------------
+    finger_straddle = RewTerm(
+        func=eval2_mdp.finger_straddle_v219,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "margin": 0.005,
+        },
+        weight=0.5,
+    )
+    gripper_orientation = RewTerm(
+        func=eval2_mdp.orientation_quat_tracking_v219,
+        params={"ee_frame_cfg": SceneEntityCfg("ee_frame"), "decay": 3.0},
+        weight=1.0,
+    )
+
+    # --- Grasp (contact-impulse) -------------------------------------------
+    # NB: per Eureka, prefer one-time milestone over per-step continuous.
+    # We keep ONLY the milestone (no continuous grasping_cube term).
+    grasp_milestone = RewTerm(
+        func=eval2_mdp.grasp_milestone_v219,
+        params={
+            "gripper_sensor_name": "contact_gripper",
+            "jaw_sensor_name": "contact_jaw",
+            "cube_cfg": SceneEntityCfg("cube"),
+            "force_threshold": 1.0,
+        },
+        weight=2.0,   # one-time bonus, sized to spike at acquisition
+    )
+
+    # --- Lift (bounded, gated on contact-grasp) ----------------------------
+    lifting_object = RewTerm(
+        func=eval2_mdp.lift_clipped_gated,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "spawn_z": 0.0565,
+            "max_lift": 0.15,
+            "gripper_sensor_name": "contact_gripper",
+            "jaw_sensor_name": "contact_jaw",
+            "force_threshold": 1.0,
+        },
+        weight=5.0,
+    )
+    lift_milestone = RewTerm(
+        func=eval2_mdp.lift_milestone_v219,
+        params={
+            "cube_cfg": SceneEntityCfg("cube"),
+            "spawn_z": 0.0565,
+            "threshold": 0.10,
+        },
+        weight=5.0,   # one-time on first lift > 10cm
+    )
+
+    # --- Goal tracking (dual-scale, double-gated on lift AND contact-grasp) --
+    # Verifier flagged 2026-05-12: previous lift-only gate let the policy
+    # wedge the cube against the gripper, lift via friction, and farm
+    # goal-tracking without a real grasp. Now requires both gates.
+    object_goal_tracking = RewTerm(
+        func=eval2_mdp.goal_tracking_lift_gated_dual_scale,
+        params={
+            "std": 0.30,
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "command_name": "object_pose",
+            "min_lift_height": 0.04,
+            "gripper_sensor_name": "contact_gripper",
+            "jaw_sensor_name": "contact_jaw",
+            "force_threshold": 1.0,
+        },
+        weight=16.0,
+    )
+    object_goal_tracking_fine = RewTerm(
+        func=eval2_mdp.goal_tracking_lift_gated_dual_scale,
+        params={
+            "std": 0.05,
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "command_name": "object_pose",
+            "min_lift_height": 0.04,
+            "gripper_sensor_name": "contact_gripper",
+            "jaw_sensor_name": "contact_jaw",
+            "force_threshold": 1.0,
+        },
+        weight=5.0,
+    )
+
+    # --- Success terminal (bounded positive, dominates shaping) -----------
+    success_bonus = RewTerm(
+        func=eval2_mdp.success_terminal_v219,
+        params={
+            "distance_threshold": 0.05,
+            "min_lift_height": 0.12,
+            "static_frames_required": 5,
+            "cube_speed_threshold": 0.05,
+            "command_name": "object_pose",
+            "cube_cfg": SceneEntityCfg("cube"),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "gripper_sensor_name": "contact_gripper",
+            "jaw_sensor_name": "contact_jaw",
+            "force_threshold": 1.0,
+        },
+        weight=15.0,
+    )
+
+    # --- DrEureka safety cocktail (sim2real motor / joint protection) -----
+    motor_torque_penalty = RewTerm(
+        func=eval2_mdp.torque_penalty_v219,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+        weight=1.0e-3,   # weight is 1e-3, function returns -sum(tau^2)
+    )
+    motor_work_penalty = RewTerm(
+        func=eval2_mdp.work_penalty_v219,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+        weight=1.0e-4,   # function returns -sum(|tau q_dot|)
+    )
+    joint_limit_penalty = RewTerm(
+        func=eval2_mdp.joint_limit_penalty_v219,
+        params={"asset_cfg": SceneEntityCfg("robot"), "safety_margin": 0.05},
+        weight=1.0e-2,   # function returns -sum(violation^2)
+    )
+    close_no_contact_penalty = RewTerm(
+        func=eval2_mdp.close_no_contact_penalty_v219,
+        params={
+            "gripper_action_idx": -1,                # gripper is the last action dim
+            "gripper_sensor_name": "contact_gripper",
+            "jaw_sensor_name": "contact_jaw",
+            "cube_cfg": SceneEntityCfg("cube"),
+            "force_threshold": 1.0,
+            "close_action_threshold": 0.0,
+        },
+        weight=0.5,   # function returns -1 when pinching air
+    )
+
+    # --- Smoothness (Isaac Lab defaults) ----------------------------------
+    action_rate = RewTerm(func=base_mdp.action_rate_l2, weight=-1.0e-4)
+    joint_vel = RewTerm(
+        func=base_mdp.joint_vel_l2,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+        weight=-1.0e-4,
+    )
+
+    # NB: NO cube_dropped_penalty term — early termination on drop only.
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV219(LeIsaacLiftCubeRLVisualEnvCfgV218B):
+    """V2.19 visual env — full doc-driven rewrite.
+
+    Inherits from V218B Visual for: wrist camera, geometry, recorder
+    disabled, scene assets. Overrides:
+      - rewards (RewardsCfgV219, fresh from doc)
+      - scene (adds two ContactSensors on gripper + jaw)
+    """
+
+    rewards: RewardsCfgV219 = RewardsCfgV219()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        # CRITICAL: enable PhysX contact reporter API on the robot articulation.
+        # Without this, ContactSensorCfg below fails at scene init with:
+        #   "Sensor at path '/World/envs/env_.*/Robot/gripper' could not find
+        #    any bodies with contact reporter API."
+        # This flag is OFF by default in SO101_FOLLOWER_CFG (leisaac asset).
+        self.scene.robot.spawn.activate_contact_sensors = True
+
+        # Add contact sensors. We attach them to the SO-101 `gripper` (top
+        # finger / wrist plate) and `jaw` (moving bottom finger) bodies,
+        # filtered to report only contact with the cube. The contact-impulse
+        # grasp predicate reads `net_forces_w_history` from these.
+        # NOTE: filter_prim_paths_expr REMOVED -- GPU PhysX (cuda:0) does not
+        # support the contact filter API on rigid-body cubes (it warns
+        # "GPU contact filter for collider ... is not supported" and will
+        # silently hang env build when forced to a precise filter prim path).
+        # Without filter, the sensor reports the TOTAL contact force on the
+        # body. During a grasp the cube is the dominant contact source, so the
+        # downstream cube_grasped_contact_v219 predicate (force > 1.0 N + cube
+        # speed gate) still works in practice. False positives from table /
+        # self-contact are limited by the cube_speed gate.
+        self.scene.contact_gripper = ContactSensorCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/gripper",
+            history_length=3,
+            track_pose=False,
+        )
+        self.scene.contact_jaw = ContactSensorCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/jaw",
+            history_length=3,
+            track_pose=False,
+        )
+
+        # Recorder already disabled by V218B parent. Wrist cam already set up.
+
+        # NB: cube_dropped DoneTerm in self.terminations is preserved (early
+        # termination on drop), but the RewardsCfgV219 has NO drop penalty.
+        # If a `cube_dropped_penalty` reward term was added by a parent
+        # post_init (V2.13+), zero out its weight here.
+        if hasattr(self.rewards, "cube_dropped_penalty"):
+            try:
+                self.rewards.cube_dropped_penalty.weight = 0.0
+            except Exception:
+                pass
+
+
+@configclass
+class LeIsaacLiftCubeRLVisualEnvCfgV219_PLAY(LeIsaacLiftCubeRLVisualEnvCfgV219):
+    """Smaller scene for replaying a V2.19 visual checkpoint."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5

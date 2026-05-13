@@ -1,0 +1,161 @@
+"""Observation terms — match Squint's PlaceCube obs EXACTLY.
+
+After ``FlattenRGBDObservationWrapper`` strips everything but the canonical
+``state`` and ``rgb`` keys, Squint's policy sees:
+
+    obs["state"] : float32, shape (12,)
+        = [noisy_qpos[0..5], controller_target_qpos[0..5]]
+    obs["rgb"]   : uint8,   shape (16, 16, 3)
+        downsampled wrist camera (raw 128x128 -> 16x16, mode='area')
+
+This file exposes those two terms ONLY, in the same byte layout. Anything
+else (item_pose, bin_pose, ...) is INTERNAL to the env's reward / debug;
+the policy never reads it.
+"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import torch
+import torch.nn.functional as F
+
+from isaaclab.assets import Articulation
+from isaaclab.managers import SceneEntityCfg
+
+if TYPE_CHECKING:
+    from isaaclab.envs import ManagerBasedRLEnv
+
+
+# ---------------------------------------------------------------------------
+# State observations (qpos | target_qpos)
+# ---------------------------------------------------------------------------
+
+
+def joint_pos_with_noise(
+    env: "ManagerBasedRLEnv",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    noise_std: float = 0.0,
+) -> torch.Tensor:
+    """Robot qpos.  Squint adds Gaussian noise (std = 5deg) when DR is on; we
+    leave it at 0 for the deploy-mode env so the obs matches the canonical
+    audit dump byte-for-byte. Pass ``noise_std`` > 0 if you reintroduce DR.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    qpos = asset.data.joint_pos
+    if noise_std > 0:
+        qpos = qpos + torch.randn_like(qpos) * noise_std
+    return qpos
+
+
+def goal_color_one_hot(
+    env: "ManagerBasedRLEnv",
+    goal_color_idx: int = 0,
+) -> torch.Tensor:
+    """6-d goal-color one-hot vector (matches Squint's COLOR_PALETTE).
+
+    Squint's new checkpoint conditions on the goal color of the cube the
+    policy should pick. The palette:
+
+    idx | name   | RGB
+    0   | red    | (1.0, 0.0, 0.0)
+    1   | blue   | (0.0, 0.0, 1.0)
+    2   | green  | (0.0, 1.0, 0.0)
+    3   | yellow | (1.0, 1.0, 0.0)
+    4   | purple | (0.6, 0.0, 0.8)
+    5   | orange | (1.0, 0.5, 0.0)
+
+    For deploy we keep ``goal_color_idx`` fixed (no per-episode random
+    sampling). Set to 0 (red) by default since our cube is red.
+    """
+    one_hot = torch.zeros(env.num_envs, 6, device=env.device, dtype=torch.float32)
+    one_hot[:, goal_color_idx] = 1.0
+    return one_hot
+
+
+def controller_target_qpos(
+    env: "ManagerBasedRLEnv",
+    action_term_name: str = "arm_and_gripper",
+) -> torch.Tensor:
+    """Integrated joint-position target maintained by our delta-target action.
+
+    Mirrors Squint's ``agent.controller.get_state()`` for the
+    ``pd_joint_target_delta_pos`` controller, which returns the controller's
+    internal ``_target_qpos`` tensor.
+
+    Important: this MUST come from the same source as Squint, otherwise
+    state[6:12] will be off and the policy will see a different obs.
+    """
+    action_term = env.action_manager.get_term(action_term_name)
+    return action_term.target_qpos
+
+
+# ---------------------------------------------------------------------------
+# Image observation (16x16 RGB, downsampled with area-mode interpolation)
+# ---------------------------------------------------------------------------
+
+
+def wrist_rgb_16(
+    env: "ManagerBasedRLEnv",
+    camera_name: str = "wrist",
+    greenscreen_bg_rgb: tuple[int, int, int] | None = None,
+    greenscreen_keep_keywords: tuple[str, ...] = ("Cube", "Bin", "Robot"),
+) -> torch.Tensor:
+    """16x16 RGB from the wrist camera, matching Squint's deploy pipeline.
+
+    Squint downsamples the raw 128x128 wrist RGB to 16x16 with
+    ``F.interpolate(..., mode='area')`` (the canonical audit confirmed this).
+
+    If ``greenscreen_bg_rgb`` is set (e.g. ``(184, 173, 169)`` for Squint's
+    #B8ADA9 taupe), this also composites the RGB over a solid background:
+    pixels whose segmentation ID does NOT correspond to a "kept" object
+    (matched by ``greenscreen_keep_keywords`` against the seg-id labels)
+    are replaced with the background colour BEFORE the area downsample.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape ``(N, 16, 16, 3)``, dtype ``uint8``.
+    """
+    cam = env.scene.sensors[camera_name]
+    rgb = cam.data.output["rgb"]  # (N, H, W, 3 or 4) uint8
+    if rgb.shape[-1] == 4:
+        rgb = rgb[..., :3]
+
+    if greenscreen_bg_rgb is not None:
+        seg_key = None
+        for cand in ("instance_segmentation_fast", "semantic_segmentation",
+                     "instance_segmentation"):
+            if cand in cam.data.output:
+                seg_key = cand
+                break
+        if seg_key is not None:
+            seg = cam.data.output[seg_key]  # (N, H, W) or (N, H, W, 1) int
+            if seg.dim() == 4 and seg.shape[-1] == 1:
+                seg = seg.squeeze(-1)
+            # Build the set of seg IDs to KEEP based on the per-camera info
+            # mapping ``id -> {'class': prim_path}`` populated by the renderer.
+            keep_ids: set[int] = set()
+            try:
+                info_for_env0 = cam.data.info[0].get(seg_key, None)
+                if isinstance(info_for_env0, dict):
+                    id_to_label = info_for_env0.get("idToLabels", info_for_env0)
+                    for sid, lbl in id_to_label.items():
+                        try:
+                            sid_int = int(sid)
+                        except (ValueError, TypeError):
+                            continue
+                        lbl_str = str(lbl)
+                        if any(kw.lower() in lbl_str.lower() for kw in greenscreen_keep_keywords):
+                            keep_ids.add(sid_int)
+            except Exception:
+                pass
+
+            if keep_ids:
+                keep_tensor = torch.tensor(sorted(keep_ids), device=seg.device, dtype=seg.dtype)
+                mask = torch.isin(seg, keep_tensor)  # (N, H, W) bool
+                bg = torch.tensor(greenscreen_bg_rgb, device=rgb.device, dtype=rgb.dtype).view(1, 1, 1, 3)
+                rgb = torch.where(mask.unsqueeze(-1), rgb, bg.expand_as(rgb))
+
+    rgb_chw = rgb.permute(0, 3, 1, 2).float()
+    rgb_16 = F.interpolate(rgb_chw, size=(16, 16), mode="area")
+    return rgb_16.permute(0, 2, 3, 1).to(torch.uint8)

@@ -1,0 +1,26 @@
+  sim_freq         = 100
+  control_freq     = 10
+  gravity          = None
+  scene.solver_position_iterations       = 15
+  scene.solver_velocity_iterations       = 1
+  scene.contact_offset                   = 0.02
+  scene.rest_offset                      = 0
+  scene.bounce_threshold                 = 2.0
+  scene.friction_offset_threshold        = ?
+  scene.friction_correlation_distance    = ?
+  scene.enable_pcm                       = True
+  scene.enable_tgs                       = True
+  scene.enable_ccd                       = False
+  cube friction    = (0.30000001192092896,)
+  cube density     = (700.0,)
+  cube half_sizes  = (0.009999999776482582,)
+  cube mass        = 0.00559999980032444
+  gripper stiffness = ?
+  gripper damping   = ?
+  gripper force_lim = ?
+  joint[shoulder_pan      ] stiffness=?  damping=?  force_lim=?
+  joint[shoulder_lift     ] stiffness=?  damping=?  force_lim=?
+  joint[elbow_flex        ] stiffness=?  damping=?  force_lim=?
+  joint[wrist_flex        ] stiffness=?  damping=?  force_lim=?
+  joint[wrist_roll        ] stiffness=?  damping=?  force_lim=?
+  joint[gripper           ] stiffness=?  damping=?  force_lim=?

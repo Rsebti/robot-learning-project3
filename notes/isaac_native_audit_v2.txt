@@ -1,0 +1,308 @@
+Loading user config located at: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1/user.config.json'
+[Info] [carb] Logging to file: c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/logs/Kit/Isaac-Sim/5.1/kit_20260513_105454.log
+2026-05-13T08:54:54Z [10ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\041bcda9-dc1b-499e-8571-3885c9ecacb8.dmp'
+2026-05-13T08:54:54Z [12ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\ce4d1d63-4dc7-4be2-ba29-ff63aaed3314.dmp'
+2026-05-13T08:54:54Z [14ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\26d0b50b-b92d-46fb-8d2a-b93074726226.dmp'
+2026-05-13T08:54:54Z [14ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\47027f85-9fa7-4fb1-92d6-c9a00e5cd11e.dmp'
+2026-05-13T08:54:54Z [15ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\5365d253-0fec-437a-a473-35cdc37c3e1b.dmp'
+2026-05-13T08:54:54Z [15ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\5f58e451-e778-4dff-958e-c7f24a66669f.dmp'
+2026-05-13T08:54:54Z [16ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\ba17cf93-694e-44c9-9be6-30e1fdfb6609.dmp'
+2026-05-13T08:54:54Z [16ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\d48f265f-bddc-446c-8dee-4adec4cf7e6e.dmp'
+2026-05-13T08:54:54Z [17ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\9cd83bd4-bc20-4739-90b0-f05bdd1518b7.dmp'
+2026-05-13T08:54:54Z [21ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\5237b9f3-7743-4c55-903e-d1c45b198266.dmp'
+2026-05-13T08:54:54Z [22ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\70949990-c020-44a3-883d-299d5087dad7.dmp'
+2026-05-13T08:54:54Z [23ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\bcb48431-9e61-4aaa-8e4e-73ccad822690.dmp'
+2026-05-13T08:54:54Z [24ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\4430d359-b242-444f-a248-6d4989a968e7.dmp'
+2026-05-13T08:54:54Z [26ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\a1c8c317-85e2-46bf-9505-ee14b7d25f45.dmp'
+2026-05-13T08:54:54Z [27ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\df9de0c9-99c5-4b6e-93f7-24de37ce73ee.dmp'
+2026-05-13T08:54:54Z [29ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\27bc979d-8dce-4d0b-b73a-18fb63562188.dmp'
+2026-05-13T08:54:54Z [30ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\12e87fe5-457a-4054-9d8d-7f556f053b1e.dmp'
+2026-05-13T08:54:54Z [31ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\19a75dd3-f470-44f4-b53a-4395d9e37f32.dmp'
+2026-05-13T08:54:54Z [33ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\e1244378-36f6-4b5f-8d6e-3d74d66b6123.dmp'
+2026-05-13T08:54:54Z [34ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\5cb47934-3085-4fef-a574-ce8a0b6fabe9.dmp'
+2026-05-13T08:54:54Z [35ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\ac7eb764-3837-4c92-98d4-e80c6e296cd2.dmp'
+2026-05-13T08:54:54Z [35ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\1b90dcf8-149d-478f-a66a-35c2896dd894.dmp'
+2026-05-13T08:54:54Z [36ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\a95707f1-a4f3-4201-9650-b5a3fad927e1.dmp'
+2026-05-13T08:54:54Z [36ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\2841b654-8bb1-4977-82ad-3713f6db6807.dmp'
+2026-05-13T08:54:54Z [37ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\bf5b3ec4-4805-448a-baa8-ef7371c740c9.dmp'
+2026-05-13T08:54:54Z [37ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\35344ae6-0289-40b0-bfb0-52178e9e0407.dmp'
+2026-05-13T08:54:54Z [38ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\1201da68-0c3a-46df-86d1-c399b8fbcbd0.dmp'
+2026-05-13T08:54:54Z [38ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\d790fa1f-58bf-4e52-982b-f00f72cd1cbb.dmp'
+2026-05-13T08:54:54Z [39ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\f8e0d4b1-af87-4b3b-b31a-5969a6bc4605.dmp'
+2026-05-13T08:54:54Z [39ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\f30b008d-8ba2-400c-9625-7113f276bbe7.dmp'
+2026-05-13T08:54:54Z [40ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: 'c:/users/user/desktop/ma2/isaac/isaac_so_arm101/.venv/lib/site-packages/isaacsim/kit/data/Kit/Isaac-Sim/5.1\d5c460d0-69eb-4373-8f29-565fdcef7e2c.dmp'
+
+|---------------------------------------------------------------------------------------------|
+| Driver Version: 591.86        | Graphics API: Vulkan
+|=============================================================================================|
+| GPU | Name                             | Active | LDA | GPU Memory | Vendor-ID | LUID       |
+|     |                                  |        |     |            | Device-ID | UUID       |
+|     |                                  |        |     |            | Bus-ID    |            |
+|---------------------------------------------------------------------------------------------|
+| 0   | NVIDIA GeForce RTX 5070          | Yes: 0 |     | 11943   MB | 10de      | d5eb0000.. |
+|     |                                  |        |     |            | 2f04      | 2d89bf3e.. |
+|     |                                  |        |     |            | 1         |            |
+|=============================================================================================|
+| OS: Windows 11 Pro, Version: 10.0 (25H2), Build: 26200, Kernel: 10.0.26100.8246
+| Processor: Intel(R) Core(TM) i5-14600KF
+| Cores: 14 | Logical Cores: 20
+|---------------------------------------------------------------------------------------------|
+| Total Memory (MB): 32549 | Free Memory: 19511
+| Total Page/Swap (MB): 45861 | Free Page/Swap: 26453
+|---------------------------------------------------------------------------------------------|
+2026-05-13T08:54:55Z [1,358ms] [Warning] [carb] Acquiring non optional plugin interface which is not listed as dependency: [omni::physx::IPhysxBenchmarks v1.0] (plugin: <default plugin>), by client: omni.physics.physx.plugin. Add it to CARB_PLUGIN_IMPL_DEPS() macro of a client.
+2026-05-13T08:54:55Z [1,374ms] [Warning] [omni.isaac.dynamic_control] omni.isaac.dynamic_control is deprecated as of Isaac Sim 4.5. No action is needed from end-users.
+2026-05-13T08:54:56Z [1,964ms] [Warning] [pxr.Semantics] pxr.Semantics is deprecated - please use Semantics instead
+2026-05-13T08:54:56Z [2,063ms] [Warning] [omni.graph.core.plugin] Found duplicate of category 'Replicator' - was 'Annotators', adding 'Fabric Reader'
+2026-05-13T08:54:56Z [2,063ms] [Warning] [omni.graph.core.plugin] Category 'Replicator' not accepted on node type 'omni.replicator.core.FabricReader' in extension 'omni.replicator.core'
+2026-05-13T08:54:56Z [2,064ms] [Warning] [omni.replicator.core.scripts.extension] No material configuration file, adding configuration to material settings directly.
+2026-05-13T08:55:02Z [8,042ms] [Warning] [omni.fabric.plugin] Warning: attribute overrideClipRange not found for bucket id 7
+
+2026-05-13T08:55:02Z [8,382ms] [Warning] [isaaclab.envs.manager_based_env] Seed not set for the environment. The environment creation may not be deterministic.
+2026-05-13T08:55:03Z [8,525ms] [War[INFO][AppLauncher]: Using device: cuda:0
+[INFO][AppLauncher]: Loading experience file: C:\Users\user\Desktop\MA2\isaac\isaac_so_arm101\.venv\Lib\site-packages\isaaclab\apps\isaaclab.python.headless.rendering.kit
+[INFO]: Parsing configuration from: sim.eval2.envs.squint_native.squint_env_cfg:SquintNativePlaceEnvCfg_PLAY
+[INFO]: Base environment:
+	Environment device    : cuda:0
+	Environment seed      : None
+	Physics step-size     : 0.01
+	Rendering step-size   : 0.1
+	Environment step-size : 0.1
+[INFO]: Time taken for scene creation : 0.408318 seconds
+[INFO]: Scene manager:  <class InteractiveScene>
+	Number of environments: 1
+	Environment spacing   : 2.5
+	Source prim name      : /World/envs/env_0
+	Global prim paths     : []
+	Replicate physics     : True
+[INFO]: Starting the simulation. This may take a few seconds. Please wait...
+[INFO]: Time taken for simulation start : 1.045302 seconds
+[INFO] Command Manager:  <CommandManager> contains 0 active terms.
++------------------------+
+|  Active Command Terms  |
++--------+-------+-------+
+| Index  | Name  |  Type |
++--------+-------+-------+
++--------+-------+-------+
+
+[INFO] Event Manager:  <EventManager> contains 1 active terms.
++-------------------------------------+
+| Active Event Terms in Mode: 'reset' |
++---------+---------------------------+
+|  Index  | Name                      |
++---------+---------------------------+
+|    0    | reset_robot               |
+|    1    | reset_cube_and_bin        |
++---------+---------------------------+
+
+[INFO] Recorder Manager:  <RecorderManager> contains 0 active terms.
++---------------------+
+| Active Recorder Terms |
++-----------+---------+
+|   Index   | Name    |
++-----------+---------+
++-----------+---------+
+
+[INFO] Action Manager:  <ActionManager> contains 1 active terms.
++-------------------------------------+
+|    Active Action Terms (shape: 6)   |
++-------+-----------------+-----------+
+| Index | Name            | Dimension |
++-------+-----------------+-----------+
+|   0   | arm_and_gripper |         6 |
++-------+-----------------+-----------+
+
+[INFO] Observation Manager: <ObservationManager> contains 2 groups.
++------------------------------------------------------+
+| Active Observation Terms in Group: 'policy' (shape: (12,)) |
++-------------+--------------------------+-------------+
+|    Index    | Name                     |    Shape    |
++-------------+--------------------------+-------------+
+|      0      | qpos                     |     (6,)    |
+|      1      | target_qpos              |     (6,)    |
++-------------+--------------------------+-------------+
++-----------------------------------------+
+| Active Observation Terms in Group: 'rgb' |
++----------+---------+--------------------+
+|  Index   | Name    |       Shape        |
++----------+---------+--------------------+
+|    0     | rgb     |    (16, 16, 3)     |
++----------+---------+--------------------+
+
+[INFO] Termination Manager:  <TerminationManager> contains 1 active terms.
++-----------------------------+
+|   Active Termination Terms  |
++-------+----------+----------+
+| Index | Name     | Time Out |
++-------+----------+----------+
+|   0   | time_out |   True   |
++-------+----------+----------+
+
+[INFO] Reward Manager:  <RewardManager> contains 0 active terms.
++-----------------------+
+|  Active Reward Terms  |
++-------+------+--------+
+| Index | Name | Weight |
++-------+------+--------+
++-------+------+--------+
+
+[INFO] Curriculum Manager:  <CurriculumManager> contains 0 active terms.
++----------------------+
+| Active Curriculum Terms |
++-----------+----------+
+|   Index   | Name     |
++-----------+----------+
++-----------+----------+
+
+[INFO]: Completed setting up the environment...
+Setting seed: 0
+
+[audit] Settling physics for 10 steps...
+
+==========================================================================================
+  FULL SCENE AUDIT — task=Isaac-SquintNative-Place-Play-v0
+==========================================================================================
+
+[env_origin] world = (+0.0000, +0.0000, +0.0000)
+
+──────────────────────────────────────────────────────────────────────────────────────────
+  ROBOT
+──────────────────────────────────────────────────────────────────────────────────────────
+
+[joint count] 6    [body count] 10
+
+[joints — qpos / qvel / soft limits]
+  [0] shoulder_pan        qpos= -0.0185 rad (   -1.06°)  qvel= +0.0001  soft=[-1.920, +1.920]
+  [1] shoulder_lift       qpos= +0.0683 rad (   +3.91°)  qvel= -0.2606  soft=[-1.745, +1.745]
+  [2] elbow_flex          qpos= -0.0500 rad (   -2.87°)  qvel= +0.0333  soft=[-1.690, +1.690]
+  [3] wrist_flex          qpos= +1.5708 rad (  +90.00°)  qvel= +0.0122  soft=[-1.658, +1.658]
+  [4] wrist_roll          qpos= -1.5745 rad (  -90.21°)  qvel= +0.0044  soft=[-2.744, +2.841]
+  [5] gripper             qpos= +1.0350 rad (  +59.30°)  qvel= +0.0017  soft=[-0.175, +2.094]
+
+[actuators — stiffness/damping (POST our override should be 1000/100)]
+  [all]
+    joint_indices = slice(None, None, None)
+    stiffness     = tensor([[1000., 1000., 1000., 1000., 1000., 1000.]], device='cuda:0')
+    damping       = tensor([[100., 100., 100., 100., 100., 100.]], device='cuda:0')
+    effort_limit_sim   = tensor([[100., 100., 100., 100., 100., 100.]], device='cuda:0')
+    velocity_limit_sim = tensor([[10.0000, 10.0000, 10.0000, 10.0000, 10.0000, 10.0000]],
+       device='cuda:0')
+
+[bodies — world position + quat + local axes in world]
+  [0] base                     
+        pos_w  = (+0.0000, +0.0000, +0.0000)    env_local = (+0.0000, +0.0000, +0.0000)
+        quat_w = (w=+1.0000, x=+0.0000, y=+0.0000, z=+0.0000)
+        local +X → world (+1.000, +0.000, +0.000)    local +Y → world (+0.000, +1.000, +0.000)    local +Z → world (+0.000, +0.000, +1.000)
+  [1] shoulder                 
+        pos_w  = (+0.0388, +0.0000, +0.0624)    env_local = (+0.0388, +0.0000, +0.0624)
+        quat_w = (w=-0.0000, x=+0.0092, y=-1.0000, z=-0.0000)
+        local +X → world (-1.000, -0.018, -0.000)    local +Y → world (-0.018, +1.000, +0.000)    local +Z → world (-0.000, +0.000, -1.000)
+  [2] upper_arm                
+        pos_w  = (+0.0696, -0.0177, +0.1166)    env_local = (+0.0696, -0.0177, +0.1166)
+        quat_w = (w=-0.4778, x=+0.4874, y=-0.5123, z=-0.5212)
+        local +X → world (-0.068, -0.001, -0.998)    local +Y → world (-0.998, -0.018, +0.068)    local +Z → world (-0.018, +1.000, +0.000)
+  [3] lower_arm                
+        pos_w  = (+0.1052, -0.0171, +0.2270)    env_local = (+0.1052, -0.0171, +0.2270)
+        quat_w = (w=+0.0130, x=+0.0001, y=-0.7071, z=-0.7070)
+        local +X → world (-1.000, -0.018, +0.018)    local +Y → world (+0.018, +0.000, +1.000)    local +Z → world (-0.018, +1.000, +0.000)
+  [4] wrist                    
+        pos_w  = (+0.2401, -0.0146, +0.2297)    env_local = (+0.2401, -0.0146, +0.2297)
+        quat_w = (w=+0.0130, x=+0.0001, y=-0.7071, z=-0.7070)
+        local +X → world (-1.000, -0.018, +0.018)    local +Y → world (+0.018, +0.000, +1.000)    local +Z → world (-0.018, +1.000, +0.000)
+  [5] gripper                  
+        pos_w  = (+0.2387, +0.0035, +0.1686)    env_local = (+0.2387, +0.0035, +0.1686)
+        quat_w = (w=+0.6950, x=-0.0067, y=+0.0062, z=-0.7190)
+        local +X → world (-0.034, -0.999, +0.001)    local +Y → world (+0.999, -0.034, -0.018)    local +Z → world (+0.018, +0.000, +1.000)
+  [6] finger1_tip              
+        pos_w  = (+0.2371, +0.0055, +0.0767)    env_local = (+0.2371, +0.0055, +0.0767)
+        quat_w = (w=+0.6950, x=-0.0067, y=+0.0062, z=-0.7190)
+        local +X → world (-0.034, -0.999, +0.001)    local +Y → world (+0.999, -0.034, -0.018)    local +Z → world (+0.018, +0.000, +1.000)
+  [7] jaw                      
+        pos_w  = (+0.2564, -0.0173, +0.1449)    env_local = (+0.2564, -0.0173, +0.1449)
+        quat_w = (w=+0.6849, x=+0.1737, y=-0.6788, z=-0.2002)
+        local +X → world (-0.002, -0.510, +0.860)    local +Y → world (+0.038, +0.860, +0.510)    local +Z → world (-0.999, +0.034, +0.018)
+  [8] gripper_frame_link       
+        pos_w  = (+0.2369, +0.0114, +0.0705)    env_local = (+0.2369, +0.0114, +0.0705)
+        quat_w = (w=-0.0062, x=+0.7190, y=+0.6950, z=-0.0067)
+        local +X → world (+0.034, +0.999, -0.001)    local +Y → world (+0.999, -0.034, -0.018)    local +Z → world (-0.018, -0.000, -1.000)
+  [9] finger2_tip              
+        pos_w  = (+0.2334, -0.0777, +0.0974)    env_local = (+0.2334, -0.0777, +0.0974)
+        quat_w = (w=+0.6849, x=+0.1737, y=-0.6788, z=-0.2002)
+        local +X → world (-0.002, -0.510, +0.860)    local +Y → world (+0.038, +0.860, +0.510)    local +Z → world (-0.999, +0.034, +0.018)
+
+──────────────────────────────────────────────────────────────────────────────────────────
+  CUBE + BIN
+──────────────────────────────────────────────────────────────────────────────────────────
+
+[rigid objects: ['cube', 'bin_floor', 'bin_wall_pos_y', 'bin_wall_neg_y', 'bin_wall_pos_x', 'bin_wall_neg_x']]
+  cube                pos_w = (+0.3944, +0.0582, +0.0125)    quat_w = (w=+0.6194, x=+0.0000, y=+0.0000, z=+0.7851)
+  bin_floor           pos_w = (+0.2039, +0.0547, +0.0025)    quat_w = (w=+0.2042, x=+0.0000, y=+0.0000, z=+0.9789)
+  bin_wall_pos_y      pos_w = (+0.1839, +0.0088, +0.0150)    quat_w = (w=+0.2042, x=+0.0000, y=+0.0000, z=+0.9789)
+  bin_wall_neg_y      pos_w = (+0.2239, +0.1005, +0.0150)    quat_w = (w=+0.2042, x=+0.0000, y=+0.0000, z=+0.9789)
+  bin_wall_pos_x      pos_w = (+0.1672, +0.0707, +0.0150)    quat_w = (w=+0.2042, x=+0.0000, y=+0.0000, z=+0.9789)
+  bin_wall_neg_x      pos_w = (+0.2406, +0.0387, +0.0150)    quat_w = (w=+0.2042, x=+0.0000, y=+0.0000, z=+0.9789)
+
+──────────────────────────────────────────────────────────────────────────────────────────
+  WRIST CAMERA
+──────────────────────────────────────────────────────────────────────────────────────────
+
+[wrist cam] world pos = (+0.0000, +0.0000, +0.0000)
+
+  [quat_w_world] = (w=+1.0000, x=-0.0000, y=-0.0000, z=+0.0000)
+      local +X → world (+1.000, +0.000, +0.000)
+      local +Y → world (-0.000, +1.000, -0.000)
+      local +Z → world (-0.000, +0.000, +1.000)
+      local -X → world (-1.000, -0.000, -0.000)
+      local -Y → world (+0.000, -1.000, +0.000)
+      local -Z → world (+0.000, -0.000, -1.000)  ← optical axis (USD/world)
+
+  → ground projection (table z=0.036, world): (-0.000, +0.000, +0.036)
+
+  [quat_w_opengl] = (w=+0.5000, x=+0.5000, y=-0.5000, z=-0.5000)
+      local +X → world (+0.000, -1.000, +0.000)
+      local +Y → world (+0.000, +0.000, +1.000)
+      local +Z → world (-1.000, +0.000, +0.000)
+      local -X → world (+0.000, +1.000, +0.000)
+      local -Y → world (+0.000, +0.000, -1.000)
+      local -Z → world (+1.000, +0.000, +0.000)  ← optical axis (OpenGL)
+
+  [quat_w_ros] = (w=+0.5000, x=-0.5000, y=+0.5000, z=-0.5000)
+      local +X → world (+0.000, -1.000, +0.000)
+      local +Y → world (+0.000, +0.000, -1.000)
+      local +Z → world (+1.000, +0.000, +0.000)  ← optical axis (ROS)
+      local -X → world (+0.000, +1.000, +0.000)
+      local -Y → world (+0.000, +0.000, +1.000)
+      local -Z → world (-1.000, +0.000, +0.000)
+
+──────────────────────────────────────────────────────────────────────────────────────────
+  KEY DISTANCES
+──────────────────────────────────────────────────────────────────────────────────────────
+  gripper → cube     distance = 0.2272 m  (Δxyz = (+0.156, +0.055, -0.156))
+  gripper → bin      distance = 0.1773 m  (Δxyz = (-0.035, +0.051, -0.166))
+  wrist cam → cube   distance = 0.3989 m  (Δxyz = (+0.394, +0.058, +0.012))
+
+──────────────────────────────────────────────────────────────────────────────────────────
+  JOINT AXIS PROBE
+  Commanding +0.1 (norm action) on ONE joint at a time, observing Δworld pos of jaw.
+  This reveals which world-direction each joint rotates the end-effector.
+──────────────────────────────────────────────────────────────────────────────────────────
+  Tip link = jaw
+  Action space dim = 6
+
+  action[0] (joint=shoulder_pan      )  +0.1 x 10  Δworld_tip = (-0.0026, -0.0204, -0.0000)  |Δ|=0.0205
+  action[1] (joint=shoulder_lift     )  +0.1 x 10  Δworld_tip = (+0.0023, -0.0013, -0.0167)  |Δ|=0.0169
+  action[2] (joint=elbow_flex        )  +0.1 x 10  Δworld_tip = (-0.0091, -0.0003, -0.0116)  |Δ|=0.0147
+  action[3] (joint=wrist_flex        )  +0.1 x 10  Δworld_tip = (-0.0045, +0.0000, -0.0004)  |Δ|=0.0045
+  action[4] (joint=wrist_roll        )  +0.1 x 10  Δworld_tip = (+0.0014, +0.0015, -0.0004)  |Δ|=0.0021
+  action[5] (joint=gripper           )  +0.1 x 10  Δworld_tip = (-0.0004, -0.0001, +0.0001)  |Δ|=0.0004
+ning] [omni.usd] Warning: in _ReportErrors at line 3172 of C:\g\201060795\USD\pxr\usd\usd\stage.cpp -- In </World/envs/env_0/Robot/gripper_frame_link/visuals>: Unresolved reference prim path @C:/Users/user/Desktop/MA2/robot-learning-project3/squint/converted_usd/configuration/so101_squint_renamed_physics.usd@</visuals/gripper_frame_link> introduced by @C:/Users/user/Desktop/MA2/robot-learning-project3/squint/converted_usd/configuration/so101_squint_renamed_base.usd@</so101/gripper_frame_link/visuals> (recomposing stage on stage @anon:000001AAF2307BF0:World0.usd@ <000001AAF433B740>)
+
+2026-05-13T08:55:03Z [8,525ms] [Warning] [omni.usd] Warning: in _ReportErrors at line 3172 of C:\g\201060795\USD\pxr\usd\usd\stage.cpp -- In </World/envs/env_0/Robot/finger2_tip/visuals>: Unresolved reference prim path @C:/Users/user/Desktop/MA2/robot-learning-project3/squint/converted_usd/configuration/so101_squint_renamed_physics.usd@</visuals/finger2_tip> introduced by @C:/Users/user/Desktop/MA2/robot-learning-project3/squint/converted_usd/configuration/so101_squint_renamed_base.usd@</so101/finger2_tip/visuals> (recomposing stage on stage @anon:000001AAF2307BF0:World0.usd@ <000001AAF433B740>)
+
+2026-05-13T08:55:03Z [8,525ms] [Warning] [omni.usd] Warning: in _ReportErrors at line 3172 of C:\g\201060795\USD\pxr\usd\usd\stage.cpp -- In </World/envs/env_0/Robot/finger1_tip/visuals>: Unresolved reference prim path @C:/Users/user/Desktop/MA2/robot-learning-project3/squint/converted_usd/configuration/so101_squint_renamed_physics.usd@</visuals/finger1_tip> introduced by @C:/Users/user/Desktop/MA2/robot-learning-project3/squint/converted_usd/configuration/so101_squint_renamed_base.usd@</so101/finger1_tip/visuals> (recomposing stage on stage @anon:000001AAF2307BF0:World0.usd@ <000001AAF433B740>)
+
+2026-05-13T08:55:03Z [9,013ms] [Warning] [isaaclab.actuators.actuator_pd] The <ImplicitActuatorCfg> object has a value for 'effort_limit'. This parameter will be removed in the future. To set the effort limit, please use 'effort_limit_sim' instead.
+2026-05-13T08:55:03Z [9,013ms] [Warning] [isaaclab.actuators.actuator_pd] The <ImplicitActuatorCfg> object has a value for 'velocity_limit'. Previously, although this value was specified, it was not getting used by implicit actuators. Since this parameter affects the simulation behavior, we continue to not use it. This parameter will be removed in the future. To set the velocity limit, please use 'velocity_limit_sim' instead.
+2026-05-13T08:55:03Z [9,129ms] [Warning] [omni.fabric.plugin] getAttributeCount called on non-existent path /World/envs/env_0/Robot/wrist/collisions/wrist_roll_pitch_so101_v2_convex/World
+2026-05-13T08:55:03Z [9,129ms] [Warning] [omni.fabric.plugin] getTypes called on non-existent path /World/envs/env_0/Robot/wrist/collisions/wrist_roll_pitch_so101_v2_convex/World
+2026-05-13T08:55:04Z [9,802ms] [Warning] [rtx.postprocessing.plugin] DLSS increasing input dimensions: Render resolution of (74, 74) is below minimal input resolution of 300.

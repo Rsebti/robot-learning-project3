@@ -1,0 +1,12 @@
+cam.data.output keys: ['rgb', 'instance_segmentation_fast']
+
+--- 'rgb' ---
+  shape=(1, 128, 128, 3), dtype=torch.uint8
+  min=174, max=248
+  unique values (n=63): [174, 176, 177, 178, 179, 180, 182, 189, 190, 193, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215] ...
+--- 'instance_segmentation_fast' ---
+  shape=(1, 128, 128, 4), dtype=torch.uint8
+  min=0, max=255
+  unique values (n=2): [0, 255]
+
+cam.data.info[0] = {'rgb': None, 'instance_segmentation_fast': {'idToLabels': {(0, 0, 0, 0): 'BACKGROUND', (0, 0, 0, 255): 'UNLABELLED'}, 'idToSemantics': {(0, 0, 0, 0): {'class': 'BACKGROUND'}, (0, 0, 0, 255): {'class': 'UNLABELLED'}}}}

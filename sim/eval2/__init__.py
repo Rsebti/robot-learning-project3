@@ -1527,3 +1527,132 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+
+# V2.19 — full reward rewrite per notes/v219_reward_search_claude.md.
+# Contact-impulse grasp predicate, milestone bonuses, dual-scale tracking,
+# DrEureka safety cocktail, +15 success terminal, no drop penalty.
+# Same PPO hyperparams as V218B Cold (only reward stack changes).
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V219-cold-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV219"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_19_cold:LiftCubePPORunnerCfgV219Cold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-LeIsaac-SO101-Lift-Visual-V219-cold-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.leisaac_lift_env_cfg:LeIsaacLiftCubeRLVisualEnvCfgV219_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_v2_19_cold:LiftCubePPORunnerCfgV219Cold"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+
+# ---------------------------------------------------------------------------
+# Squint-port — Lift and Place tasks adapted from
+# https://github.com/aalmuzairee/squint (envs/lift.py, envs/place.py).
+# State-based observations, PPO via rsl_rl, Squint-style multi-stage
+# dense reward. No physical bin (Place uses goal pose as virtual bin).
+# ---------------------------------------------------------------------------
+
+
+gym.register(
+    id="Isaac-SO101-Squint-Lift-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": "sim.eval2.squint_envs:SquintLiftEnvCfg",
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_squint:SquintLiftPPORunnerCfg"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-SO101-Squint-Lift-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": "sim.eval2.squint_envs:SquintLiftEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_squint:SquintLiftPPORunnerCfg"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-SO101-Squint-Place-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": "sim.eval2.squint_envs:SquintPlaceEnvCfg",
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_squint:SquintPlacePPORunnerCfg"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-SO101-Squint-Place-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": "sim.eval2.squint_envs:SquintPlaceEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": (
+            "sim.eval2.agents.rsl_rl_ppo_cfg_squint:SquintPlacePPORunnerCfg"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+
+# ---------------------------------------------------------------------------
+# Squint-NATIVE port — built from scratch, no LeIsaac inheritance.
+# Goal: deploy the ManiSkill checkpoint and isolate Isaac vs SAPIEN dynamics.
+# ---------------------------------------------------------------------------
+
+gym.register(
+    id="Isaac-SquintNative-Place-v0",
+    entry_point="sim.eval2.envs.squint_native.squint_env:SquintNativePlaceEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.envs.squint_native.squint_env_cfg:SquintNativePlaceEnvCfg"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-SquintNative-Place-Play-v0",
+    entry_point="sim.eval2.envs.squint_native.squint_env:SquintNativePlaceEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.envs.squint_native.squint_env_cfg:SquintNativePlaceEnvCfg_PLAY"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-SquintNative-Place-Replay-v0",
+    entry_point="sim.eval2.envs.squint_native.squint_env:SquintNativePlaceEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.envs.squint_native.squint_env_cfg:SquintNativePlaceEnvCfg_REPLAY"
+        ),
+    },
+    disable_env_checker=True,
+)

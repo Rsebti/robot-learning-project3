@@ -1026,3 +1026,512 @@ def cube_at_goal_with_lift(
     cube: RigidObject = env.scene[cube_cfg.name]
     lifted = cube.data.root_pos_w[:, 2] > min_lift_height
     return (reached & lifted).float()
+
+
+# =============================================================================
+# V2.19 — full rewrite from notes/v219_reward_search_claude.md
+# =============================================================================
+# Design principles applied (each cited in the architecture doc):
+#   - Contact-impulse grasp predicate (DexPoint, ManiSkill, Lin et al. 2025)
+#   - Multiplicative gating on grasp/lift cascade
+#   - Bounded shaping kernels (tanh, exp) only — no raw -d
+#   - One-time milestone bonuses on 0->1 transitions (Eureka)
+#   - Dual-scale tracking (coarse + fine) gated on lift
+#   - DrEureka safety cocktail (torque, work, qlimit, anti-jam)
+#   - Positive success terminal dominates cumulative shaping
+#
+# All terms below are designed to be combined as the V2.19 reward stack.
+# Old V2.18b functions above are preserved for archive — V2.19 uses the
+# new functions exclusively.
+
+
+def _get_jaw_force_norm(env: ManagerBasedRLEnv, sensor_name: str) -> torch.Tensor:
+    """Return per-env L2 norm of the latest contact force on `sensor_name`.
+
+    Returns zeros if sensor missing (graceful fallback so training still runs
+    if the contact sensor was forgotten in the scene cfg).
+    """
+    if sensor_name not in env.scene.sensors:
+        return torch.zeros(env.num_envs, device=env.device)
+    sensor = env.scene[sensor_name]
+    forces = sensor.data.net_forces_w_history  # (N, history, num_bodies, 3)
+    if forces is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    # Latest frame, summed over bodies, L2 norm.
+    latest = forces[:, 0]                        # (N, num_bodies, 3)
+    return latest.norm(dim=-1).sum(dim=-1)       # (N,)
+
+
+def cube_grasped_contact_v219(
+    env: ManagerBasedRLEnv,
+    gripper_sensor_name: str = "contact_gripper",
+    jaw_sensor_name: str = "contact_jaw",
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    ee_frame_name: str = "ee_frame",
+    force_threshold: float = 1.0,
+    cube_speed_threshold: float = 0.5,
+    cube_proximity_threshold: float = 0.10,
+) -> torch.Tensor:
+    """V2.19 contact-impulse grasp predicate (DexPoint / ManiSkill style)
+    with cube-proximity gate to eliminate table / self-collision false
+    positives.
+
+    Returns ``BoolTensor (num_envs,)`` True when ALL hold:
+      (i)   total contact force on `gripper` body > force_threshold
+      (ii)  total contact force on `jaw` body > force_threshold
+      (iii) cube within `cube_proximity_threshold` of the jaw fingertip
+            (ee_frame.target[1], offset (-0.021, -0.070, 0.02) from jaw body)
+      (iv)  cube lateral velocity < cube_speed_threshold
+
+    The proximity gate is mandatory: GPU PhysX (cuda:0) silently fails or
+    hangs env build when ContactSensorCfg.filter_prim_paths_expr is set,
+    so sensors report TOTAL contact (any source). Without the proximity
+    gate, top-down approach with both jaws flat on the table fires a
+    false grasp every step.
+
+    Why d_jaw only (not d_palm): leisaac's ee_frame.target[0] ("gripper")
+    has NO offset -- it points at the wrist plate body origin, ~9 cm
+    behind the fingertips in top-down. d_palm would be misleading. The
+    jaw fingertip is right next to the palm fingertip during a grasp, so
+    a cube near the jaw fingertip is necessarily near the palm fingertip
+    too. One gate is sufficient and more robust.
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    cube_pos = cube.data.root_pos_w
+    cube_speed = cube.data.root_lin_vel_w[:, :2].norm(dim=-1)
+
+    f_gripper = _get_jaw_force_norm(env, gripper_sensor_name)
+    f_jaw = _get_jaw_force_norm(env, jaw_sensor_name)
+
+    if ee_frame_name in env.scene.sensors:
+        ee_frame = env.scene[ee_frame_name]
+        jaw_tip = ee_frame.data.target_pos_w[:, 1, :]      # fingertip-offset target
+        d_jaw = (cube_pos - jaw_tip).norm(dim=-1)
+        cube_in_grip_zone = d_jaw < cube_proximity_threshold
+    else:
+        cube_in_grip_zone = torch.ones_like(f_gripper, dtype=torch.bool)
+
+    grasped = (
+        (f_gripper > force_threshold)
+        & (f_jaw > force_threshold)
+        & cube_in_grip_zone
+        & (cube_speed < cube_speed_threshold)
+    )
+    return grasped
+
+
+def cube_grasped_contact_v219_float(
+    env: ManagerBasedRLEnv,
+    gripper_sensor_name: str = "contact_gripper",
+    jaw_sensor_name: str = "contact_jaw",
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    ee_frame_name: str = "ee_frame",
+    force_threshold: float = 1.0,
+    cube_speed_threshold: float = 0.5,
+    cube_proximity_threshold: float = 0.10,
+) -> torch.Tensor:
+    """Float-cast of cube_grasped_contact_v219 — used as continuous gate."""
+    return cube_grasped_contact_v219(
+        env, gripper_sensor_name, jaw_sensor_name, cube_cfg, ee_frame_name,
+        force_threshold, cube_speed_threshold, cube_proximity_threshold,
+    ).float()
+
+
+def _ensure_extras_buffer(env: ManagerBasedRLEnv, key: str) -> torch.Tensor:
+    """Return a per-env BoolTensor stored in env.extras, creating if absent.
+
+    This is how we track "previous step" state for one-time milestone
+    bonuses across episode steps. The buffer is reset to False at episode
+    reset by hooking into env.episode_length_buf == 0.
+    """
+    if not hasattr(env, "_v219_state"):
+        env._v219_state = {}
+    if key not in env._v219_state:
+        env._v219_state[key] = torch.zeros(
+            env.num_envs, device=env.device, dtype=torch.bool
+        )
+    return env._v219_state[key]
+
+
+def grasp_milestone_v219(
+    env: ManagerBasedRLEnv,
+    gripper_sensor_name: str = "contact_gripper",
+    jaw_sensor_name: str = "contact_jaw",
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    force_threshold: float = 1.0,
+) -> torch.Tensor:
+    """V2.19 — one-time bonus on the 0->1 transition of contact-grasp.
+
+    Returns ``FloatTensor (num_envs,)`` with value 1.0 only at the step
+    where ``cube_grasped_contact_v219`` first becomes True after a False.
+    Subsequent True steps yield 0.0 — prevents the "hold-and-don't-move"
+    exploit (Eureka reflection logs). Use with weight=+5.0 (size to
+    dominate per-step shaping at the moment of grasp acquisition).
+    """
+    grasped_now = cube_grasped_contact_v219(
+        env, gripper_sensor_name, jaw_sensor_name, cube_cfg, force_threshold
+    )
+    prev = _ensure_extras_buffer(env, "grasp_prev")
+    # Reset buffer to False at episode start (episode_length_buf == 0).
+    just_reset = env.episode_length_buf == 0
+    prev = torch.where(just_reset, torch.zeros_like(prev), prev)
+    transition = grasped_now & (~prev)
+    # Update for next step.
+    env._v219_state["grasp_prev"] = grasped_now.clone()
+    return transition.float()
+
+
+def lift_clipped_gated(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    spawn_z: float = 0.0565,
+    max_lift: float = 0.15,
+    gripper_sensor_name: str = "contact_gripper",
+    jaw_sensor_name: str = "contact_jaw",
+    force_threshold: float = 1.0,
+) -> torch.Tensor:
+    """V2.19 — bounded lift reward, gated on contact-grasp.
+
+    Returns ``clamp((cube.z - spawn_z) / max_lift, 0, 1) * is_grasped``.
+    Per-step max = 1.0. Use with weight=+5.0 (per V2.11 spec).
+
+    ManiSkill PickCube + DextrAH-G clipped pattern: prevents unbounded
+    accumulation as cube rises higher than needed.
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    cube_z = cube.data.root_pos_w[:, 2]
+    height_above = torch.clamp((cube_z - spawn_z) / max_lift, 0.0, 1.0)
+    grasped = cube_grasped_contact_v219_float(
+        env, gripper_sensor_name, jaw_sensor_name, cube_cfg, force_threshold
+    )
+    return height_above * grasped
+
+
+def lift_milestone_v219(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    spawn_z: float = 0.0565,
+    threshold: float = 0.10,
+) -> torch.Tensor:
+    """V2.19 — one-time bonus on the first lift-above-threshold transition.
+
+    Returns 1.0 at the step where (cube.z - spawn_z) > threshold for the
+    first time in the episode. Use with weight=+5.0.
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    cube_z = cube.data.root_pos_w[:, 2]
+    lifted_now = (cube_z - spawn_z) > threshold
+    prev = _ensure_extras_buffer(env, "lift_prev")
+    just_reset = env.episode_length_buf == 0
+    prev = torch.where(just_reset, torch.zeros_like(prev), prev)
+    transition = lifted_now & (~prev)
+    env._v219_state["lift_prev"] = lifted_now.clone()
+    return transition.float()
+
+
+def reach_coarse_v219(
+    env: ManagerBasedRLEnv,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    std: float = 0.10,
+) -> torch.Tensor:
+    """V2.19 — bounded coarse reach kernel (Isaac Lab default).
+
+    ``1 - tanh(d / 0.10)``. Use with weight=+1.0.
+    Dual-scale partner of `reach_fine_v219` — coarse term shapes long-range
+    approach, fine term provides steep gradient inside last 2 cm.
+    """
+    cube: RigidObject = env.scene[object_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+    palm = ee_frame.data.target_pos_w[..., 0, :]
+    d = torch.norm(palm - cube.data.root_pos_w, dim=-1)
+    return 1.0 - torch.tanh(d / std)
+
+
+def reach_fine_v219(
+    env: ManagerBasedRLEnv,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    std: float = 0.02,
+) -> torch.Tensor:
+    """V2.19 — bounded fine reach kernel (Isaac Lab default).
+
+    ``1 - tanh(d / 0.02)``. Use with weight=+0.5.
+    """
+    cube: RigidObject = env.scene[object_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+    palm = ee_frame.data.target_pos_w[..., 0, :]
+    d = torch.norm(palm - cube.data.root_pos_w, dim=-1)
+    return 1.0 - torch.tanh(d / std)
+
+
+def finger_straddle_v219(
+    env: ManagerBasedRLEnv,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    margin: float = 0.005,
+) -> torch.Tensor:
+    """V2.19 — finger-straddle geometry bonus (IsaacGymEnvs franka_cabinet).
+
+    Returns 1.0 when palm is above cube top AND jaw is below cube top
+    (= the cube is between the two contact points vertically). 0.0
+    otherwise. Use with weight=+0.5.
+
+    Adapted to SO-101: palm = top contact, jaw = bottom contact, both
+    coming from the same parent body in our case but with independent
+    Z positions in top-down pose.
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    ee_frame = env.scene[ee_frame_cfg.name]
+    palm = ee_frame.data.target_pos_w[..., 0, :]
+    jaw = ee_frame.data.target_pos_w[..., 1, :]
+    cube_z = cube.data.root_pos_w[:, 2]
+    palm_above = palm[:, 2] > cube_z + margin
+    jaw_below = jaw[:, 2] < cube_z - margin
+    return (palm_above & jaw_below).float()
+
+
+def goal_tracking_lift_gated_dual_scale(
+    env: ManagerBasedRLEnv,
+    std: float = 0.30,
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    command_name: str = "object_pose",
+    min_lift_height: float = 0.04,
+    gripper_sensor_name: str = "contact_gripper",
+    jaw_sensor_name: str = "contact_jaw",
+    force_threshold: float = 1.0,
+) -> torch.Tensor:
+    """V2.19 — bounded goal-distance kernel, double-gated on lift AND grasp.
+
+    ``(1 - tanh(d_cube_goal / std)) * (cube.z > min_lift) * is_grasped``.
+
+    Per Isaac Lab pattern, called twice with std=0.30 (coarse, w=16) and
+    std=0.05 (fine, w=5).
+
+    Both gates are required:
+      - lift gate (cube.z > min_lift): closes the "slide cube into goal
+        projection on the table" exploit
+      - grasp gate (contact-impulse): closes the "wedge cube against
+        gripper without grasping, lift via friction, farm goal-tracking"
+        exploit (verifier finding 2026-05-12 — without this gate, the
+        policy could earn +21/step by faking a lift)
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    robot: Articulation = env.scene[robot_cfg.name]
+    cube_pos_w = cube.data.root_pos_w
+    command = env.command_manager.get_command(command_name)
+    goal_pos_b = command[:, :3]
+    goal_pos_w, _ = combine_frame_transforms(
+        robot.data.root_pos_w, robot.data.root_quat_w, goal_pos_b
+    )
+    d = torch.norm(goal_pos_w - cube_pos_w, dim=-1)
+    raw = 1.0 - torch.tanh(d / std)
+    lift_gate = (cube_pos_w[:, 2] > min_lift_height).float()
+    grasp_gate = cube_grasped_contact_v219_float(
+        env, gripper_sensor_name, jaw_sensor_name, cube_cfg, force_threshold,
+    )
+    return raw * lift_gate * grasp_gate
+
+
+def success_terminal_v219(
+    env: ManagerBasedRLEnv,
+    distance_threshold: float = 0.05,
+    min_lift_height: float = 0.12,
+    static_frames_required: int = 5,
+    cube_speed_threshold: float = 0.05,
+    command_name: str = "object_pose",
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    gripper_sensor_name: str = "contact_gripper",
+    jaw_sensor_name: str = "contact_jaw",
+    force_threshold: float = 1.0,
+) -> torch.Tensor:
+    """V2.19 — positive success terminal (replaces -50 drop penalty).
+
+    Triggers 1.0 (one-time) when:
+      - cube within `distance_threshold` of goal
+      - cube_z > `min_lift_height`
+      - cube held in contact-grasp
+      - cube has been static for >= `static_frames_required` consecutive frames
+
+    Use with weight=+15.0 (sized to dominate cumulative shaping per
+    Skalse et al. NeurIPS 2022, Wang & Lin 2025). The static-frames check
+    closes the "throw-grasp" exploit (Lin et al. CoRL 2025).
+    """
+    cube: RigidObject = env.scene[cube_cfg.name]
+    robot: Articulation = env.scene[robot_cfg.name]
+    cube_pos_w = cube.data.root_pos_w
+    cube_speed = cube.data.root_lin_vel_w.norm(dim=-1)
+
+    # Goal proximity.
+    command = env.command_manager.get_command(command_name)
+    goal_pos_b = command[:, :3]
+    goal_pos_w, _ = combine_frame_transforms(
+        robot.data.root_pos_w, robot.data.root_quat_w, goal_pos_b
+    )
+    near_goal = torch.norm(goal_pos_w - cube_pos_w, dim=-1) < distance_threshold
+    high_enough = cube_pos_w[:, 2] > min_lift_height
+
+    grasped = cube_grasped_contact_v219(
+        env, gripper_sensor_name, jaw_sensor_name, cube_cfg, force_threshold
+    )
+
+    # Static-frames counter.
+    counter = _ensure_extras_buffer_int(env, "static_count")
+    just_reset = env.episode_length_buf == 0
+    counter = torch.where(just_reset, torch.zeros_like(counter), counter)
+    is_static = cube_speed < cube_speed_threshold
+    counter = torch.where(is_static, counter + 1, torch.zeros_like(counter))
+    env._v219_state["static_count"] = counter.clone()
+
+    success = near_goal & high_enough & grasped & (counter >= static_frames_required)
+    return success.float()
+
+
+def _ensure_extras_buffer_int(env: ManagerBasedRLEnv, key: str) -> torch.Tensor:
+    """Same as _ensure_extras_buffer but for IntTensor (counters)."""
+    if not hasattr(env, "_v219_state"):
+        env._v219_state = {}
+    if key not in env._v219_state:
+        env._v219_state[key] = torch.zeros(
+            env.num_envs, device=env.device, dtype=torch.long
+        )
+    return env._v219_state[key]
+
+
+def torque_penalty_v219(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """V2.19 — DrEureka motor torque penalty (sim2real safety).
+
+    ``-1e-3 * sum(tau^2)``. Use with weight=1.0 (sign in the term).
+    Returns ``- sum(applied_torque^2)`` — apply -1e-3 weight in env config.
+    """
+    robot: Articulation = env.scene[asset_cfg.name]
+    tau = robot.data.applied_torque
+    return -torch.sum(tau ** 2, dim=-1)
+
+
+def work_penalty_v219(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """V2.19 — mechanical work penalty (Hora et al. CoRL 2022).
+
+    ``-1e-4 * sum(|tau * q_dot|)``. Correlates with motor heating better
+    than torque alone — important for SO-101's small servos.
+    """
+    robot: Articulation = env.scene[asset_cfg.name]
+    tau = robot.data.applied_torque
+    q_dot = robot.data.joint_vel
+    return -torch.sum(torch.abs(tau * q_dot), dim=-1)
+
+
+def joint_limit_penalty_v219(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    safety_margin: float = 0.05,
+) -> torch.Tensor:
+    """V2.19 — soft joint-limit penalty (DrEureka safety cocktail).
+
+    Quadratic penalty for each joint outside ``[soft_lower + margin,
+    soft_upper - margin]``. Returns ``-sum(relu(violation)^2)``.
+    Use with weight=-1e-2 (sign external).
+    """
+    robot: Articulation = env.scene[asset_cfg.name]
+    q = robot.data.joint_pos
+    soft_low = robot.data.soft_joint_pos_limits[..., 0]
+    soft_high = robot.data.soft_joint_pos_limits[..., 1]
+    over_high = torch.relu(q - (soft_high - safety_margin))
+    under_low = torch.relu((soft_low + safety_margin) - q)
+    return -torch.sum(over_high ** 2 + under_low ** 2, dim=-1)
+
+
+def close_no_contact_penalty_v219(
+    env: ManagerBasedRLEnv,
+    gripper_action_idx: int = -1,
+    gripper_sensor_name: str = "contact_gripper",
+    jaw_sensor_name: str = "contact_jaw",
+    cube_cfg: SceneEntityCfg = SceneEntityCfg("cube"),
+    force_threshold: float = 1.0,
+    close_action_threshold: float = 0.0,
+) -> torch.Tensor:
+    """V2.19 — anti-jam penalty: commanding close without grasping anything.
+
+    Returns -1.0 when the policy is currently *commanding* the gripper to
+    close (raw action[gripper_action_idx] < close_action_threshold) AND
+    no cube is being grasped (no contact above force_threshold). Use with
+    weight=0.5 (function is already negative).
+
+    Verifier note 2026-05-12 fix: switched from joint-position-based check
+    (q_gripper <= 0.15) to action-based (action < 0) per spec — checks
+    the policy's *intent* to close rather than the joint's settled state,
+    which avoids one-step-lag double-penalty during settling.
+
+    BinaryJointPositionAction layout in V2.19 env:
+      action[..., 0:5] = arm joints (shoulder_pan, shoulder_lift,
+                        elbow_flex, wrist_flex, wrist_roll)
+      action[..., 5]   = gripper binary (negative -> close, positive -> open)
+    Default `gripper_action_idx=-1` picks the last entry.
+
+    Closes the "gripper closes on empty space" exploit (RotateIt 2023,
+    ByteDance Seed 2025).
+    """
+    a = env.action_manager.action  # (N, action_dim)
+    is_close_cmd = a[..., gripper_action_idx] < close_action_threshold
+    grasped = cube_grasped_contact_v219(
+        env, gripper_sensor_name, jaw_sensor_name, cube_cfg, force_threshold
+    )
+    pinching_air = is_close_cmd & (~grasped)
+    return -pinching_air.float()
+
+
+def orientation_quat_tracking_v219(
+    env: ManagerBasedRLEnv,
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    decay: float = 3.0,
+    desired_quat_w: tuple[float, float, float, float] | None = None,
+) -> torch.Tensor:
+    """V2.19 — bounded orientation tracking (Human2Sim2Robot, Lum et al. CoRL 2025).
+
+    Rewards the gripper being aligned in the desired top-down grasp
+    posture. Returns ``exp(-decay * theta_err)`` ∈ (0, 1].
+
+    Two modes (verifier note 2026-05-12 fix #5):
+    1. **Default (axis-angle on approach vector)**: when `desired_quat_w`
+       is None, computes theta_err as the angle between the palm->jaw
+       approach vector (in world frame) and world -Z. This is
+       mathematically equivalent to ``quat_error_magnitude(q_gripper,
+       q_desired)`` for the case of aligning a single body axis with a
+       world direction — both reduce to the axis-angle between two unit
+       vectors. Geometry-driven, no URDF axis-convention assumptions.
+    2. **Explicit quaternion**: when `desired_quat_w` is provided
+       (w, x, y, z tuple), uses Isaac Lab's
+       ``quat_error_magnitude(q_palm_w, q_desired)`` directly. Use this
+       when the desired orientation depends on the cube's own orientation
+       (long thin objects, antipodal grasps with specific roll, etc.).
+
+    Bounded and smooth — softer than V2.18b's hard prior. Use with weight=+1.0.
+    """
+    ee_frame = env.scene[ee_frame_cfg.name]
+    if desired_quat_w is not None:
+        # Mode 2: explicit quaternion error.
+        from isaaclab.utils.math import quat_error_magnitude
+        palm_quat = ee_frame.data.target_quat_w[..., 0, :]   # (N, 4) in (w,x,y,z)
+        target = torch.tensor(
+            list(desired_quat_w), device=env.device, dtype=palm_quat.dtype
+        ).expand_as(palm_quat)
+        theta_err = quat_error_magnitude(palm_quat, target)
+        return torch.exp(-decay * theta_err)
+
+    # Mode 1: axis-angle on approach vector.
+    palm = ee_frame.data.target_pos_w[..., 0, :]
+    jaw = ee_frame.data.target_pos_w[..., 1, :]
+    delta = jaw - palm
+    delta_norm = delta / (torch.norm(delta, dim=-1, keepdim=True) + 1e-6)
+    # Cosine with world -Z; cos=1 when palm directly above jaw (top-down).
+    cos_with_down = -delta_norm[..., 2].clamp(-1.0, 1.0)
+    theta_err = torch.acos(cos_with_down)  # ∈ [0, pi]
+    return torch.exp(-decay * theta_err)
