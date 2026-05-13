@@ -23,12 +23,17 @@ LEROBOT_SCRIPTS_DIR="${LEROBOT_SCRIPTS_DIR:-/home/ethrc/Desktop/lerobot-edit-scr
 OUTPUT_BASE="${OUTPUT_BASE:-/home/ethrc/Desktop/training/checkpoints/projet3}"
 NETRC_PATH="${NETRC_PATH:-$HOME/.netrc}"
 
-LEROBOT_TRAIN_BIN="$LEROBOT_SCRIPTS_DIR/.venv/bin/lerobot-train"
+LEROBOT_TRAIN_BIN="${LEROBOT_TRAIN_BIN:-$LEROBOT_SCRIPTS_DIR/.venv/bin/lerobot-train}"
 
-DATASET_REPO_ID="${DATASET_REPO_ID:-hudela390/projet3-eval1-bowl1-v1-trimmed}"
+DATASET_REPO_ID="${DATASET_REPO_ID:-osammotg1/projet3-eval1-bowl1-v1}"
 JOB_NAME="${JOB_NAME:-projet3_act_eval1_v1}"
 RUN_NAME="${RUN_NAME:-${JOB_NAME}_$(date +%Y%m%d_%H%M%S)}"
 OUTPUT_DIR="${OUTPUT_DIR:-$OUTPUT_BASE/$RUN_NAME}"
+
+# Episodes to drop from training. Comma-separated indices, e.g. "30" or "5,12,30".
+# Empty (default) = include all episodes. Build the include list at launch time
+# from meta/info.json so the user only has to maintain the bad-episode list.
+EXCLUDE_EPISODES="${EXCLUDE_EPISODES:-}"
 
 BATCH_SIZE="${BATCH_SIZE:-32}"
 STEPS="${STEPS:-30000}"
@@ -65,8 +70,39 @@ printf '[launch_act] output=%s\n'  "$OUTPUT_DIR"
 printf '[launch_act] wandb entity=%s project=%s run=%s\n' "$WANDB_ENTITY" "$WANDB_PROJECT" "$RUN_NAME"
 nvidia-smi --query-gpu=name,memory.free --format=csv,noheader
 
+# Build --dataset.episodes filter when EXCLUDE_EPISODES is non-empty.
+EPISODES_ARG=""
+if [[ -n "$EXCLUDE_EPISODES" ]]; then
+  HF_LEROBOT_HOME_FOR_META="${HF_LEROBOT_HOME:-$HOME/.cache/huggingface/lerobot}"
+  INFO_JSON="$HF_LEROBOT_HOME_FOR_META/$DATASET_REPO_ID/meta/info.json"
+  if [[ ! -f "$INFO_JSON" ]]; then
+    printf '[launch_act] ERROR: EXCLUDE_EPISODES=%s set but %s missing.\n' "$EXCLUDE_EPISODES" "$INFO_JSON" >&2
+    printf '[launch_act] Download the dataset first (lerobot or `hf download`) or unset EXCLUDE_EPISODES.\n' >&2
+    exit 1
+  fi
+  INCLUDE_LIST=$(python3 -c '
+import json, sys
+info = json.load(open(sys.argv[1]))
+total = int(info["total_episodes"])
+excluded = {int(x) for x in sys.argv[2].split(",") if x.strip()}
+kept = [str(i) for i in range(total) if i not in excluded]
+print("[" + ",".join(kept) + "]")
+' "$INFO_JSON" "$EXCLUDE_EPISODES")
+  EPISODES_ARG="--dataset.episodes=$INCLUDE_LIST"
+  printf '[launch_act] excluding episodes [%s]; training on %d of %d.\n' \
+    "$EXCLUDE_EPISODES" \
+    "$(echo "$INCLUDE_LIST" | tr ',' '\n' | wc -l)" \
+    "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["total_episodes"])' "$INFO_JSON")"
+fi
+
 # Image augmentations (matches the ETHRC 5080_workstation default style).
-IMAGE_TFS='{"brightness":{"weight":1.0,"type":"ColorJitter","kwargs":{"brightness":[0.8,1.2]}},"contrast":{"weight":1.0,"type":"ColorJitter","kwargs":{"contrast":[0.8,1.2]}},"saturation":{"weight":0.5,"type":"ColorJitter","kwargs":{"saturation":[0.7,1.3]}},"hue":{"weight":0.2,"type":"ColorJitter","kwargs":{"hue":[-0.05,0.05]}}}'
+# Override IMAGE_TFS / MAX_NUM_TRANSFORMS / RANDOM_ORDER to swap aug profiles.
+if [[ -z "${IMAGE_TFS:-}" ]]; then
+  IMAGE_TFS='{"brightness":{"weight":1.0,"type":"ColorJitter","kwargs":{"brightness":[0.8,1.2]}},"contrast":{"weight":1.0,"type":"ColorJitter","kwargs":{"contrast":[0.8,1.2]}},"saturation":{"weight":0.5,"type":"ColorJitter","kwargs":{"saturation":[0.7,1.3]}},"hue":{"weight":0.2,"type":"ColorJitter","kwargs":{"hue":[-0.05,0.05]}}}'
+fi
+MAX_NUM_TRANSFORMS="${MAX_NUM_TRANSFORMS:-2}"
+RANDOM_ORDER="${RANDOM_ORDER:-false}"
+IMAGE_TRANSFORMS_ENABLE="${IMAGE_TRANSFORMS_ENABLE:-true}"
 
 uv run accelerate launch \
   --num_machines=1 \
@@ -75,11 +111,12 @@ uv run accelerate launch \
   --dynamo_backend=inductor \
   "$LEROBOT_TRAIN_BIN" \
   --dataset.repo_id="$DATASET_REPO_ID" \
+  ${EPISODES_ARG:-} \
   --dataset.revision=main \
   --dataset.video_backend=torchcodec \
-  --dataset.image_transforms.enable=true \
-  --dataset.image_transforms.max_num_transforms=2 \
-  --dataset.image_transforms.random_order=false \
+  --dataset.image_transforms.enable="$IMAGE_TRANSFORMS_ENABLE" \
+  --dataset.image_transforms.max_num_transforms="$MAX_NUM_TRANSFORMS" \
+  --dataset.image_transforms.random_order="$RANDOM_ORDER" \
   --dataset.image_transforms.tfs="$IMAGE_TFS" \
   --policy.type=act \
   --policy.device=cuda \
