@@ -1,0 +1,152 @@
+yellow:
+  n_pixels: 20588
+  rgb_mean:
+  - 213.5
+  - 178.6
+  - 71.7
+  rgb_median:
+  - 216
+  - 181
+  - 73
+  hsv_mean:
+  - 22.6
+  - 169.6
+  - 213.5
+  hsv_median:
+  - 23
+  - 169
+  - 216
+  hex: '#D8B549'
+orange:
+  n_pixels: 22971
+  rgb_mean:
+  - 212.7
+  - 86.4
+  - 55.1
+  rgb_median:
+  - 216
+  - 86
+  - 54
+  hsv_mean:
+  - 6.0
+  - 189.4
+  - 212.7
+  hsv_median:
+  - 6
+  - 189
+  - 216
+  hex: '#D85636'
+red:
+  n_pixels: 25501
+  rgb_mean:
+  - 182.9
+  - 47.0
+  - 27.7
+  rgb_median:
+  - 187
+  - 47
+  - 27
+  hsv_mean:
+  - 3.7
+  - 216.9
+  - 182.9
+  hsv_median:
+  - 4
+  - 218
+  - 187
+  hex: '#BB2F1B'
+blue:
+  n_pixels: 20413
+  rgb_mean:
+  - 8.9
+  - 34.9
+  - 106.6
+  rgb_median:
+  - 6
+  - 33
+  - 111
+  hsv_mean:
+  - 112.1
+  - 233.6
+  - 106.6
+  hsv_median:
+  - 112
+  - 242
+  - 111
+  hex: '#06216F'
+green:
+  n_pixels: 23541
+  rgb_mean:
+  - 25.0
+  - 73.5
+  - 32.0
+  rgb_median:
+  - 24
+  - 72
+  - 30
+  hsv_mean:
+  - 64.0
+  - 170.4
+  - 73.5
+  hsv_median:
+  - 65
+  - 175
+  - 72
+  hex: '#18481E'
+violet:
+  n_pixels: 17792
+  rgb_mean:
+  - 81.0
+  - 44.9
+  - 82.6
+  rgb_median:
+  - 80
+  - 43
+  - 82
+  hsv_mean:
+  - 149.0
+  - 117.7
+  - 83.1
+  hsv_median:
+  - 149
+  - 121
+  - 82
+  hex: '#502B52'
+bowl:
+  n_pixels: 200000
+  rgb_mean:
+  - 202.3
+  - 200.0
+  - 204.6
+  rgb_median:
+  - 201
+  - 199
+  - 203
+  hsv_mean:
+  - 121.9
+  - 7.2
+  - 205.5
+  hsv_median:
+  - 130
+  - 6
+  - 204
+  hex: '#C9C7CB'
+table:
+  n_pixels: 200000
+  rgb_mean:
+  - 159.9
+  - 160.7
+  - 164.2
+  rgb_median:
+  - 164
+  - 166
+  - 170
+  hsv_mean:
+  - 105.8
+  - 11.3
+  - 165.4
+  hsv_median:
+  - 113
+  - 8
+  - 170
+  hex: '#A4A6AA'

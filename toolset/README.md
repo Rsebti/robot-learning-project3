@@ -12,6 +12,8 @@ All outputs land in `toolset/configs/` (data) and `toolset/figs/` (plots).
 | `calibrate_camera_from_demos.py` | Self-calibration: solve K + T_cam_in_wrist from grasp-time FK ground truth. Writes `configs/camera_calibration.yaml`. |
 | `verify_eval2_demos.py` | Read the last frame of every Eval-2 demo, detect the cube color inside the bowl (white-surrounded), compare with task target. Saves annotated frames to `figs/debug/eval2_color_check/`. |
 | `map_cube_positions_eval2.py` | Eval-2 workspace coverage map: bi-color rotated markers (target + distractor colors) with split line oriented by grasp yaw. |
+| `extract_color_palette.py` | Calibrate the actual RGB/HSV of every scene entity (6 cube colors + bowl + table) from successful demo frames. Writes `configs/color_palette.yaml`. Re-run under new lighting to see how it shifts. |
+| `compare_palette_to_frames.py` | Side-by-side validation: for each entity, show a real frame with the masked region outlined next to the extracted swatch. |
 
 ## Outputs
 
@@ -23,6 +25,8 @@ toolset/
     camera_calibration.yaml      # K, T_cam_in_wrist, z_table
     eval2_verification.csv       # episode, target, detected, area, match
   figs/
+    color_palette.png            # entity swatch chart (lighting-calibrated)
+    color_palette_vs_frames.png  # palette swatches next to source frames
     positions/
       eval1_map.png              # eval-1 workspace coverage scatter
       eval2_map.png              # eval-2 bi-color rotated markers
