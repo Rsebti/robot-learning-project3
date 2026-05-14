@@ -52,6 +52,7 @@ SQUINT_SO101_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
         usd_path=str(SQUINT_USD),
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            # Full gravity — matches the flattable_woodcube_run1 training.
             disable_gravity=False,
             max_depenetration_velocity=5.0,
         ),
@@ -63,6 +64,9 @@ SQUINT_SO101_CFG = ArticulationCfg(
             solver_position_iteration_count=15,
             solver_velocity_iteration_count=1,
         ),
+        # Apply PhysxContactReportAPI to every rigid body under the robot so
+        # ``ContactSensorCfg`` can read net forces on the jaw bodies.
+        activate_contact_sensors=True,
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.0),       # robot root at world origin (Squint so101 case)

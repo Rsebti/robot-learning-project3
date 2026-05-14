@@ -47,28 +47,26 @@ def joint_pos_with_noise(
     return qpos
 
 
-def goal_color_one_hot(
-    env: "ManagerBasedRLEnv",
-    goal_color_idx: int = 0,
-) -> torch.Tensor:
-    """6-d goal-color one-hot vector (matches Squint's COLOR_PALETTE).
+NUM_COLORS = 6
+COLOR_PALETTE = (
+    (1.0, 0.0, 0.0),  # 0 red
+    (0.0, 0.0, 1.0),  # 1 blue
+    (0.0, 1.0, 0.0),  # 2 green
+    (1.0, 1.0, 0.0),  # 3 yellow
+    (0.6, 0.0, 0.8),  # 4 purple
+    (1.0, 0.5, 0.0),  # 5 orange
+)
 
-    Squint's new checkpoint conditions on the goal color of the cube the
-    policy should pick. The palette:
 
-    idx | name   | RGB
-    0   | red    | (1.0, 0.0, 0.0)
-    1   | blue   | (0.0, 0.0, 1.0)
-    2   | green  | (0.0, 1.0, 0.0)
-    3   | yellow | (1.0, 1.0, 0.0)
-    4   | purple | (0.6, 0.0, 0.8)
-    5   | orange | (1.0, 0.5, 0.0)
-
-    For deploy we keep ``goal_color_idx`` fixed (no per-episode random
-    sampling). Set to 0 (red) by default since our cube is red.
-    """
-    one_hot = torch.zeros(env.num_envs, 6, device=env.device, dtype=torch.float32)
-    one_hot[:, goal_color_idx] = 1.0
+def goal_color_one_hot(env: "ManagerBasedRLEnv") -> torch.Tensor:
+    """6-d goal-color one-hot vector — reads ``env._goal_color_idx``
+    (set per-episode by ``reset_goal_and_distractor_colors`` event)."""
+    one_hot = torch.zeros(env.num_envs, NUM_COLORS, device=env.device, dtype=torch.float32)
+    if hasattr(env, "_goal_color_idx") and env._goal_color_idx is not None:
+        gi = env._goal_color_idx
+        one_hot.scatter_(1, gi.view(-1, 1), 1.0)
+    else:
+        one_hot[:, 0] = 1.0  # fallback: red
     return one_hot
 
 
@@ -89,9 +87,85 @@ def controller_target_qpos(
     return action_term.target_qpos
 
 
+def bowl_xyz_world(
+    env: "ManagerBasedRLEnv",
+    asset_name: str = "bowl",
+) -> torch.Tensor:
+    """Bowl root position in world frame (3 floats per env).
+
+    Goal-conditioning extra: the bowl is only marginally visible from the
+    wrist cam at home pose (FOV covers the cube spawn zone, not necessarily
+    the bowl spawn zone), so we expose its xyz to the policy directly via
+    the state vector. This lets the policy plan the place phase without
+    needing to "see" the bowl on cam first.
+
+    For training warmstart from Squint ckpt 8 (which has 18-d state and
+    does NOT include bowl_xyz), pad the state_proj weight with zeros on
+    these 3 new input columns — the policy ignores bowl_xyz initially and
+    learns to use it through gradient updates.
+    """
+    bowl = env.scene[asset_name]
+    return bowl.data.root_pos_w[:, :3]
+
+
 # ---------------------------------------------------------------------------
 # Image observation (16x16 RGB, downsampled with area-mode interpolation)
 # ---------------------------------------------------------------------------
+
+
+def _apply_color_jitter(
+    rgb: torch.Tensor,
+    brightness: float = 0.3,
+    contrast: float = 0.3,
+    saturation: float = 0.3,
+    hue: float = 0.05,
+) -> torch.Tensor:
+    """Vectorised color jitter on a (N, H, W, 3) uint8 batch — replicates
+    Squint's ``utils.ColorJitterWrapper`` (torchvision ColorJitter) but in
+    pure PyTorch so it runs on GPU without a torchvision dependency.
+
+    Sampling matches torchvision conventions:
+    - brightness ∈ uniform[max(0, 1-b), 1+b]
+    - contrast   ∈ uniform[max(0, 1-c), 1+c]
+    - saturation ∈ uniform[max(0, 1-s), 1+s]
+    - hue        ∈ uniform[-h, +h]  (applied as a shift in HSV space)
+
+    Per-env (independent) for sim2real diversity across the batch.
+    """
+    if not torch.is_grad_enabled():
+        # Cheap path; we don't need gradients through this anyway.
+        pass
+    n = rgb.shape[0]
+    device = rgb.device
+    img = rgb.to(torch.float32) / 255.0  # (N, H, W, 3) in [0, 1]
+
+    # Brightness × contrast on luminance.
+    b = torch.empty(n, 1, 1, 1, device=device).uniform_(max(0.0, 1.0 - brightness), 1.0 + brightness)
+    img = (img * b).clamp(0.0, 1.0)
+
+    c = torch.empty(n, 1, 1, 1, device=device).uniform_(max(0.0, 1.0 - contrast), 1.0 + contrast)
+    mean = img.mean(dim=(1, 2, 3), keepdim=True)
+    img = ((img - mean) * c + mean).clamp(0.0, 1.0)
+
+    # Saturation: scale chroma against per-pixel grey.
+    s = torch.empty(n, 1, 1, 1, device=device).uniform_(max(0.0, 1.0 - saturation), 1.0 + saturation)
+    grey = img.mean(dim=-1, keepdim=True)
+    img = (grey + (img - grey) * s).clamp(0.0, 1.0)
+
+    # Hue shift via simple RGB rotation (cheap proxy for HSV rotation).
+    # For hue=0.05 this is a small ±0.05 * 2π rotation around the [1,1,1] axis.
+    if hue > 0:
+        theta = torch.empty(n, device=device).uniform_(-hue, +hue) * 2 * 3.141593
+        cosT = theta.cos().view(n, 1, 1, 1)
+        sinT = theta.sin().view(n, 1, 1, 1)
+        # Mean-axis rotation: R_axis(theta) applied to (img - mean) + mean.
+        # Simplified to per-channel matrix mul — approximate but visually similar.
+        m = img.mean(dim=-1, keepdim=True)
+        centred = img - m
+        rolled = torch.stack([centred[..., 1], centred[..., 2], centred[..., 0]], dim=-1)
+        img = (m + cosT * centred + sinT * rolled).clamp(0.0, 1.0)
+
+    return (img * 255.0).clamp(0.0, 255.0).to(torch.uint8)
 
 
 def wrist_rgb_16(
@@ -99,6 +173,7 @@ def wrist_rgb_16(
     camera_name: str = "wrist",
     greenscreen_bg_rgb: tuple[int, int, int] | None = None,
     greenscreen_keep_keywords: tuple[str, ...] = ("Cube", "Bin", "Robot"),
+    apply_jitter: bool = False,
 ) -> torch.Tensor:
     """16x16 RGB from the wrist camera, matching Squint's deploy pipeline.
 
@@ -158,4 +233,7 @@ def wrist_rgb_16(
 
     rgb_chw = rgb.permute(0, 3, 1, 2).float()
     rgb_16 = F.interpolate(rgb_chw, size=(16, 16), mode="area")
-    return rgb_16.permute(0, 2, 3, 1).to(torch.uint8)
+    rgb_16 = rgb_16.permute(0, 2, 3, 1).to(torch.uint8)
+    if apply_jitter:
+        rgb_16 = _apply_color_jitter(rgb_16)
+    return rgb_16

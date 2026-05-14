@@ -1,14 +1,11 @@
-"""ManagerBasedRLEnv subclass that explicitly tracks the wrist cam to the
-gripper body each step — replicates Squint's
+"""ManagerBasedRLEnv subclass that tracks the wrist cam to the gripper body
+each substep — replicates Squint's
 ``self.wrist_camera_mount.set_pose(gripper_pose * local_offset)``.
 
-We don't trust Isaac's CameraCfg.OffsetCfg inheritance because in our
-converted Squint USD, the resulting cam world pose does not match
-``gripper_pos + R_gripper · local_offset`` (verified with a side-by-side
-audit vs ManiSkill — Isaac places the cam ~12 cm too far in x/z).
-
-So we set the offset to zero in CameraCfg and override ``step()`` to write
-the correct world pose explicitly using ``set_world_poses(convention='world')``.
+Isaac's CameraCfg.OffsetCfg inheritance gives the wrong world pose under
+our converted Squint USD, so the cam offset stays zero in CameraCfg and
+``step()`` writes the correct world pose each substep via
+``cam.set_world_poses(convention='world')``.
 """
 from __future__ import annotations
 
@@ -69,12 +66,7 @@ class SquintNativePlaceEnv(ManagerBasedRLEnv):
         return self._gripper_body_idx
 
     def _update_wrist_cam_pose(self, force_render: bool = False) -> None:
-        """Set the wrist camera world pose = gripper world pose ⊗ local offset.
-
-        If ``force_render=True``, also force the cam to re-render so cam.data
-        (pos_w, quat_w_world, output['rgb']) reflects the new pose immediately.
-        Otherwise the buffers are stale until the next physics-loop scene.update.
-        """
+        """Set wrist cam world pose = gripper world pose ⊗ local offset."""
         if self._cam_sensor_name not in self.scene.sensors:
             return
         cam = self.scene.sensors[self._cam_sensor_name]
@@ -84,17 +76,38 @@ class SquintNativePlaceEnv(ManagerBasedRLEnv):
         g_pos = robot.data.body_pos_w[:, gi]    # (N, 3)
         g_quat = robot.data.body_quat_w[:, gi]  # (N, 4)
 
+        # Guard against zero-norm / NaN quats — scipy's Rotation.from_quat
+        # (used downstream by set_world_poses) raises on any quaternion that
+        # has zero norm or is non-finite.
+        identity_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=g_quat.device, dtype=g_quat.dtype)
+        # Always renormalise the gripper quat — body_quat_w isn't guaranteed
+        # to be exactly unit norm on the first frame after a multi-env reset.
+        g_norm = g_quat.norm(dim=-1, keepdim=True)
+        g_pos_finite = torch.isfinite(g_pos).all(dim=-1, keepdim=True)
+        bad = (~torch.isfinite(g_norm)) | (g_norm < 1e-4) | (~g_pos_finite)
+        g_quat = torch.where(bad, identity_quat.expand_as(g_quat), g_quat / g_norm.clamp_min(1e-9))
+
         local_pos = self._cam_local_pos.unsqueeze(0).expand(g_pos.shape[0], -1)
         cam_pos_w = g_pos + _quat_rotate(g_quat, local_pos)
         local_quat = self._cam_local_quat.unsqueeze(0).expand(g_quat.shape[0], -1)
         cam_quat_w = _quat_mul(g_quat, local_quat)
+        cam_quat_w = cam_quat_w / cam_quat_w.norm(dim=-1, keepdim=True).clamp_min(1e-9)
 
-        # set_world_poses with convention="world" matches Squint's SAPIEN cam
-        cam.set_world_poses(positions=cam_pos_w, orientations=cam_quat_w, convention="world")
+        # Sanity-clamp positions to a sane workspace box — Isaac's transform
+        # math can return NaN if positions go to inf during a degenerate
+        # multi-env reset frame.
+        cam_pos_w = torch.where(
+            torch.isfinite(cam_pos_w), cam_pos_w, torch.zeros_like(cam_pos_w)
+        )
+
+        try:
+            cam.set_world_poses(positions=cam_pos_w, orientations=cam_quat_w, convention="world")
+        except Exception:
+            # Drop a frame rather than crash the training loop — the cam
+            # stays at its previous pose; cam.data.pos_w refreshes next step.
+            pass
 
         if force_render:
-            # Mark all cam env-ids as outdated so the next cam.data read
-            # triggers _update_buffers_impl (which calls _update_poses + render).
             try:
                 cam._is_outdated.fill_(True)
                 cam._update_outdated_buffers()
@@ -103,19 +116,79 @@ class SquintNativePlaceEnv(ManagerBasedRLEnv):
 
     # -- overrides -------------------------------------------------------
     def step(self, action):
-        # Update cam pose BEFORE the physics loop so the cam render that
-        # happens INSIDE super().step() captures a view from the up-to-date
-        # gripper pose. The cam pose comes from the gripper's body_pos_w,
-        # which was last refreshed at the previous step's end of physics —
-        # so this is "last-step gripper" accurate (1 control-step lag),
-        # which is invisible at 10 Hz with small inter-step motions.
+        """ManagerBasedRLEnv.step() with the wrist cam re-synced to the
+        gripper AFTER every sim substep (otherwise the finger appears to
+        jiggle in the rendered view because the cam stays at the start-of-
+        decimation pose while the gripper drifts over the 10 substeps).
+        """
+        self.action_manager.process_action(action.to(self.device))
+        self.recorder_manager.record_pre_step()
+        is_rendering = self.sim.has_gui() or self.sim.has_rtx_sensors()
+
+        for _ in range(self.cfg.decimation):
+            self._sim_step_counter += 1
+            self.action_manager.apply_action()
+            self.scene.write_data_to_sim()
+            self.sim.step(render=False)
+            self.recorder_manager.record_post_physics_decimation_step()
+            self._update_wrist_cam_pose(force_render=False)
+            if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
+                self.sim.render()
+            self.scene.update(dt=self.physics_dt)
+
+        self.episode_length_buf += 1
+        self.common_step_counter += 1
+        self.reset_buf = self.termination_manager.compute()
+        self.reset_terminated = self.termination_manager.terminated
+        self.reset_time_outs = self.termination_manager.time_outs
+        self.reward_buf = self.reward_manager.compute(dt=self.step_dt)
+
+        if len(self.recorder_manager.active_terms) > 0:
+            self.obs_buf = self.observation_manager.compute()
+            self.recorder_manager.record_post_step()
+
+        reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        if len(reset_env_ids) > 0:
+            # Capture the PRE-RESET obs for envs that ended so the SAC replay
+            # buffer can bootstrap from V(true_final_state) instead of
+            # V(next_episode_initial_state). Mirrors ManiSkill's
+            # ``infos["final_observation"]`` convention.
+            pre_reset_obs = self.observation_manager.compute()
+            final_obs: dict = {}
+            if isinstance(pre_reset_obs, dict):
+                for k, v in pre_reset_obs.items():
+                    if isinstance(v, torch.Tensor):
+                        final_obs[k] = v.detach().clone()
+                    elif isinstance(v, dict):
+                        final_obs[k] = {
+                            kk: vv.detach().clone() for kk, vv in v.items()
+                            if isinstance(vv, torch.Tensor)
+                        }
+            self.extras["final_observation"] = final_obs
+            self.extras["final_observation_env_ids"] = reset_env_ids.detach().clone()
+
+            self.recorder_manager.record_pre_reset(reset_env_ids)
+            self._reset_idx(reset_env_ids)
+            if self.sim.has_rtx_sensors() and self.cfg.rerender_on_reset:
+                self.sim.render()
+            self.recorder_manager.record_post_reset(reset_env_ids)
+        else:
+            # No reset this step — clear stale final_observation so the
+            # training loop doesn't reuse it.
+            self.extras.pop("final_observation", None)
+            self.extras.pop("final_observation_env_ids", None)
+
+        self.command_manager.compute(dt=self.step_dt)
+        if "interval" in self.event_manager.available_modes:
+            self.event_manager.apply(mode="interval", dt=self.step_dt)
+
+        # Final cam pose update before the obs render (covers post-reset too).
         self._update_wrist_cam_pose(force_render=False)
-        return super().step(action)
+
+        self.obs_buf = self.observation_manager.compute(update_history=True)
+        return self.obs_buf, self.reward_buf, self.reset_terminated, self.reset_time_outs, self.extras
 
     def reset(self, *args, **kwargs):
         out = super().reset(*args, **kwargs)
-        # First-frame cam alignment so the very next env.step renders from
-        # the correct pose. The obs returned here is the post-reset obs;
-        # downstream code typically discards it and runs warmup steps.
         self._update_wrist_cam_pose(force_render=False)
         return out

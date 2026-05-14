@@ -155,14 +155,30 @@ class DeltaTargetJointPositionAction(ActionTerm):
             self._refresh_target_from_qpos(None)
             self._target_initialized = True
 
-        # Clamp normalized action to [-1, +1] then scale (per-joint bound).
-        clipped = torch.clamp(actions, -1.0, 1.0)
-        delta = clipped * self._scale  # (N, J), in radians
+        # Squint convention (verified against debug_artifacts/squint_audit.txt
+        # line 43 — ``normalize_action = True`` for ``pd_joint_target_delta_pos``):
+        # the policy outputs NORMALIZED actions in [-1, +1] (because
+        # ManiSkill's ``_clip_and_scale_action_space`` rewrites the
+        # single_action_space to ``Box(-1, +1)`` when normalize_action=True).
+        # ManiSkill then maps ``normalized × bound`` to radians inside
+        # ``_clip_and_scale_action``:
+        #     physical_delta = clip(action, -1, +1) × bound
+        # Without this multiply, our env would clamp policy outputs to
+        # ±bound directly, saturating the arm at max delta for any |out|>0.05
+        # and producing identical step sizes for policy_output=0.05 and =1.0.
+        # The actor's stored ``action_scale`` is 1.0 (consistent with this
+        # normalized convention — verified in ckpt 7 via probe_policy_actions).
+        delta = torch.clamp(actions, -1.0, +1.0) * self._scale
 
         self._raw_actions[:] = actions
         self._processed_actions[:] = delta
 
-        # Integrate into the stored target, clamp to joint limits.
+        # Integrate into the stored target. Squint does NOT clamp the
+        # integrated target to joint soft limits — PhysX hard-limits qpos
+        # itself, so the target can drift outside and the PD controller
+        # will simply produce a saturated effort. We keep the soft-limit
+        # clamp here as a numerical safety net (target won't blow up over
+        # long episodes if the policy persistently pushes one direction).
         self._target = torch.clamp(self._target + delta, self._joint_lo, self._joint_hi)
 
     def apply_actions(self) -> None:
