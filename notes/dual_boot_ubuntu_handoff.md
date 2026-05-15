@@ -7,6 +7,67 @@
 
 ---
 
+## ⚠️ Update 2026-05-15 — first install attempt failed, plan revised
+
+**First attempt with Ubuntu 22.04.5 LTS → does NOT boot on this hardware.**
+
+What happened (live, on the fixed PC):
+1. Booted the 22.04.5 live USB via F11 boot menu → UEFI USB selected → OK.
+2. GRUB violet appeared → "Try or Install Ubuntu" → Entrée → black screen, no
+   logo, no text. Waited 4 min, nothing.
+3. Retried with `nomodeset` (edit GRUB with `e`, replaced `quiet splash` with
+   `nomodeset`) → same hang at "Booting a command list".
+4. Verbose boot (`nomodeset`, no `quiet splash`) → only message displayed
+   was `EFI stub: UEFI Secure Boot is enabled` then kernel hang.
+5. Disabled Secure Boot in BIOS (MSI BIOS → Settings → Security → Secure Boot
+   → Disabled, then F10 save & exit). Retried verbose boot. Same hang —
+   nothing past EFI stub.
+
+**Root cause:** Ubuntu 22.04.5 ships a kernel too old (5.15 GA / 6.5 HWE) to
+support the **RTX 5070 (Blackwell, sm_120, released early 2025)**. The kernel
+panics or hangs during early init when it tries to enumerate the GPU. Even
+`nomodeset` doesn't help — the kernel itself doesn't know how to talk to
+Blackwell silicon for basic enumeration. This is consistent with the Plan B3
+note ("Ubuntu 22.04.5 may not support RTX 5070 at all") that was in the
+original troubleshooting list.
+
+**BIOS state now (persistent across reboots):**
+- ✅ Secure Boot: **Disabled** (stays off, don't re-enable).
+- ✅ Boot Priority #1: UEFI USB key (stays until USB is unplugged or order
+  changed).
+- Other settings unchanged.
+
+**Revised plan — switch to Ubuntu 24.04 LTS:**
+- Ubuntu 24.04.x ships kernel 6.8+, which has proper Blackwell support out
+  of the box (basic display via `nouveau` or the open NVIDIA module, full
+  CUDA via `nvidia-driver-555+` installed post-boot).
+- The user is going to boot back into Windows, download
+  **`ubuntu-24.04.x-desktop-amd64.iso`** from https://releases.ubuntu.com/24.04/,
+  re-flash the same USB stick with **Rufus (GPT / UEFI non-CSM / FAT32 —
+  same settings as before)**, then redo the boot procedure below.
+- **No `nomodeset` needed** with 24.04 on this hardware — `Try or Install
+  Ubuntu` should boot to the live desktop straight away.
+- All the rest of the handoff (Phase 4C partitioning, Phase 5 setup, Phase 6
+  Isaac Sim, Phase 7 training) is **identical** for 24.04 vs 22.04 — only
+  the ISO/install kernel changes. Once on the live desktop, the partitioning
+  scheme (500 GB unallocated → 32 GB swap + ~468 GB ext4 `/`) is the same,
+  and post-install `apt` packages are the same.
+
+**Where the user physically is when re-picking up:**
+- Currently at the laptop (this repo's worktree on `sebti` profile,
+  OneDrive path) while the fixed PC sits at a failed-boot screen.
+- Plan: hard-reboot the fixed PC, unplug USB, let Windows boot, redownload
+  24.04 ISO, re-flash, retry.
+
+If the next Claude session is on the **fixed PC's Windows side** assisting
+with the 24.04 redownload/Rufus step, jump to "Phase 4 — Install Ubuntu"
+below and treat `22.04.5` references as `24.04.x` throughout.
+
+If the next Claude session is on the **fixed PC's Ubuntu side** (24.04 live
+USB or fresh install), skip Phase 4 and go to Phase 5.
+
+---
+
 ## Where the user is
 
 The user is mid-way through a Windows-to-Ubuntu dual-boot installation on
@@ -21,12 +82,11 @@ the fixed PC (RTX 5070, MSI B760 GAMING PLUS WIFI, i5-14600KF, 32 GB RAM,
 - 805 MB Recovery Partition (Windows).
 - BitLocker is **OFF** on C:.
 - Fast Startup is **disabled**.
-- Secure Boot **ON** in BIOS — may need to be disabled temporarily if the
-  Ubuntu USB shows "Security Violation" at boot (SBAT revocation on the
-  Ubuntu 22.04.5 shim, predicted by Rufus).
-- Bootable USB stick (16 GB, labeled `Ubuntu 22.04.5 LTS amd64`) was
-  flashed with Rufus from `ubuntu-22.04.5-desktop-amd64.iso` in
-  GPT / UEFI (non-CSM) / FAT32 mode.
+- Secure Boot **OFF** in BIOS (was disabled on 2026-05-15 after the first
+  failed boot — see "Update 2026-05-15" section above). Stays off.
+- Bootable USB stick (16 GB) — was originally flashed with Ubuntu 22.04.5
+  but that ISO failed to boot on the RTX 5070. **To be re-flashed with
+  Ubuntu 24.04.x** in Rufus (same settings: GPT / UEFI non-CSM / FAT32).
 
 **Project state at handoff** (this repo, branch `main`):
 - Last commit: `aced716 Align Squint-native env with Squint canonical + env-local bowl_xyz`.
@@ -49,21 +109,30 @@ the fixed PC (RTX 5070, MSI B760 GAMING PLUS WIFI, i5-14600KF, 32 GB RAM,
 
 ## Phase 4 — Install Ubuntu (user is here when this file is read)
 
+> **2026-05-15 update:** target ISO is now **Ubuntu 24.04.x LTS**, NOT 22.04.5.
+> See top of file for the reason (Blackwell GPU kernel support). Secure Boot
+> is already Disabled in BIOS. Phase 4 below was originally written for
+> 22.04.5 — treat the version string as 24.04.x throughout, and skip the
+> `nomodeset` workaround entirely (24.04 boots cleanly on this hardware).
+
 ### A. Boot from the live USB
 
 If the user hasn't booted yet, the path is:
 1. Shut down Windows properly.
-2. Power on, mash `Delete` to enter MSI BIOS.
+2. Power on, mash `Delete` to enter MSI BIOS — or `F11` for the one-shot
+   Boot Menu (faster, doesn't require entering full BIOS).
 3. Boot menu / Boot Order → select `UEFI: <USB stick name>`.
-4. F10 → Save & Exit.
+4. F10 → Save & Exit (only if you entered the BIOS; F11 menu doesn't need
+   saving).
 5. GRUB menu → "Try or Install Ubuntu" → Enter.
 
-If "Security Violation" appears at boot → BIOS → Settings → Advanced →
-Windows OS Configuration → Secure Boot → Disabled → save → retry boot.
+If "Security Violation" appears at boot → BIOS → Settings → Security →
+Secure Boot → Disabled → save → retry boot. (Already done on 2026-05-15.)
 
 ### B. Run the installer
 
-From the Ubuntu live desktop, double-click **"Install Ubuntu 22.04.5 LTS"**.
+From the Ubuntu live desktop, double-click **"Install Ubuntu"** (on 24.04
+the installer is named just "Install Ubuntu" — no version in the title).
 
 1. **Language**: English (or French — user's choice).
 2. **Keyboard**: French (AZERTY) — user has a French keyboard.
