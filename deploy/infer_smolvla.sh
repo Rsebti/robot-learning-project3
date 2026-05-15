@@ -14,10 +14,17 @@
 #   → prompts: "Which cube should the policy try to pick up?"
 #
 #   TARGET_COLOR=yellow bash deploy/infer_smolvla.sh
-#   POLICY_PATH=osammotg1/projet3-smolvla-eval2-v1-step20k bash deploy/infer_smolvla.sh
+#
+# Trained checkpoints on the Hub (auto-downloaded on first use into
+# ~/.cache/huggingface/hub; pass a local pretrained_model/ dir to skip the fetch):
+#   osammotg1/projet3-smolvla-eval2-v1-dark-noise-100k   (default)
+#   osammotg1/projet3-smolvla-eval2-v1-dark-shadow-100k
+#   osammotg1/projet3-smolvla-eval2-v1                   (no-aug baseline)
+#
+#   POLICY_PATH=osammotg1/projet3-smolvla-eval2-v1-dark-shadow-100k bash deploy/infer_smolvla.sh
 set -euo pipefail
 
-POLICY_PATH="${POLICY_PATH:-osammotg1/projet3-smolvla-eval2-v1}"
+POLICY_PATH="${POLICY_PATH:-osammotg1/projet3-smolvla-eval2-v1-dark-noise-100k}"
 POLICY_DEVICE="${POLICY_DEVICE:-mps}"
 
 FOLLOWER_PORT="${FOLLOWER_PORT:-/dev/tty.usbmodem5B141129871}"
