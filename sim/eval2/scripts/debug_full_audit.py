@@ -240,10 +240,10 @@ def main() -> None:
             cp = scene["cube"].data.root_pos_w[0].detach().cpu().numpy()
             d = ((gp - cp) ** 2).sum() ** 0.5
             print(f"  gripper → cube     distance = {d:.4f} m  (Δxyz = {_fmt_vec((cp - gp).tolist(), prec=3)})")
-        if "bin_floor" in scene.rigid_objects:
-            bp = scene["bin_floor"].data.root_pos_w[0].detach().cpu().numpy()
+        if "bowl" in scene.rigid_objects:
+            bp = scene["bowl"].data.root_pos_w[0].detach().cpu().numpy()
             d = ((gp - bp) ** 2).sum() ** 0.5
-            print(f"  gripper → bin      distance = {d:.4f} m  (Δxyz = {_fmt_vec((bp - gp).tolist(), prec=3)})")
+            print(f"  gripper → bowl     distance = {d:.4f} m  (Δxyz = {_fmt_vec((bp - gp).tolist(), prec=3)})")
     if "wrist" in scene.sensors and "cube" in scene.rigid_objects:
         cam_pos = scene["wrist"].data.pos_w[0].detach().cpu().numpy()
         cp = scene["cube"].data.root_pos_w[0].detach().cpu().numpy()

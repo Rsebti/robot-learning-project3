@@ -91,7 +91,7 @@ def bowl_xyz_world(
     env: "ManagerBasedRLEnv",
     asset_name: str = "bowl",
 ) -> torch.Tensor:
-    """Bowl root position in world frame (3 floats per env).
+    """Bowl root position in env-local frame (3 floats per env).
 
     Goal-conditioning extra: the bowl is only marginally visible from the
     wrist cam at home pose (FOV covers the cube spawn zone, not necessarily
@@ -99,13 +99,22 @@ def bowl_xyz_world(
     the state vector. This lets the policy plan the place phase without
     needing to "see" the bowl on cam first.
 
+    Important — frame choice: Isaac Lab's ``root_pos_w`` is the simulator's
+    GLOBAL world frame. With N parallel envs laid out on a grid (spacing
+    ``env.scene.env_origins``), every env would see a different absolute
+    bowl xyz even when the bowl is in the same place relative to its robot.
+    We subtract ``env_origins`` so the value is in the env-local frame —
+    which equals the robot-base frame here because the SO-101 base is
+    anchored at each env's origin. The policy then sees a consistent
+    "bowl xyz wrt my robot" signal across the batch.
+
     For training warmstart from Squint ckpt 8 (which has 18-d state and
     does NOT include bowl_xyz), pad the state_proj weight with zeros on
     these 3 new input columns — the policy ignores bowl_xyz initially and
     learns to use it through gradient updates.
     """
     bowl = env.scene[asset_name]
-    return bowl.data.root_pos_w[:, :3]
+    return bowl.data.root_pos_w[:, :3] - env.scene.env_origins
 
 
 # ---------------------------------------------------------------------------

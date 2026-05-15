@@ -1656,3 +1656,14 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+gym.register(
+    id="Isaac-SquintNative-Place-NoDR-Play-v0",
+    entry_point="sim.eval2.envs.squint_native.squint_env:SquintNativePlaceEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            "sim.eval2.envs.squint_native.squint_env_cfg:SquintNativePlaceEnvCfg_NoDR_PLAY"
+        ),
+    },
+    disable_env_checker=True,
+)

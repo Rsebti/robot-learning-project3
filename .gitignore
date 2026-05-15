@@ -224,6 +224,27 @@ __marimo__/
 *.webp
 document_pdf.pdf
 
+# Course materials and external PDFs at the repo root (lecture notes etc.)
+/*.pdf
+
+# External Squint repo (cloned for reference / asset generation, not our code).
+# Re-clone from https://github.com/fedecomi04/squint on a fresh machine.
+squint/
+
+# Debug artifacts in notes/ — runtime dumps, audit screenshots, sensor traces.
+# Anything that's a real note (markdown, design doc) should still be tracked.
+notes/_*
+notes/wrist_*.png
+notes/cam_intrinsics.txt
+notes/cam_pose_trace.txt
+notes/fov_*.txt
+notes/gripper_collision*.txt
+notes/jaw_collision*.txt
+notes/obs_dump.txt
+
+# Local zip artifacts (env snapshots, manual exports).
+sim/eval2/envs/*.zip
+
 # Perception module — heavy binaries and locally-generated previews
 sim/eval2/perception/data.pt
 sim/eval2/perception/checkpoint.pt

@@ -70,13 +70,10 @@ _TOUCHING_FORCE_LIGHT = 0.01                 # very-light contact threshold
 # force could be from ANY object touching the jaw.
 _CUBE_NEAR_JAW = 0.05
 _CUBE_NEAR_GRIPPER = 0.03
-# P2 fix: tightened from 0.005 (5mm) → 0.001 (1mm). Previous threshold was
-# triggering false positives during normal cube-grasp descents (jaw hovers
-# ~3-4 mm above table while closing on a 2 cm cube whose centre is at
-# z=10mm and top at z=20mm). False positive × -6 reward (now -2) was
-# pushing the critic to assign low value to any descent → policy refused
-# to grasp.
-_TABLE_NEAR_GRIPPER = 0.001
+# Squint canonical: SAPIEN uses pairwise contact (filtered to table); we
+# approximate via gripper height above table. Restored to 5 mm (was 1 mm
+# during P2 experiment) for sim2sim consistency with Squint's policy.
+_TABLE_NEAR_GRIPPER = 0.005
 
 
 def _gripper_openness(robot: Articulation) -> torch.Tensor:
@@ -163,13 +160,13 @@ def squint_dense_reward(
         & item_lifted
     )
 
-    # Cube xy inside bowl rect AABB (rectangular, matches Squint).
+    # Cube xy inside bowl rect AABB (rectangular). Squint's predicate is
+    # XY-ONLY (no z check) — place.py:449-451. We match exactly.
     dx = item_pos[:, 0] - bowl_pos[:, 0]
     dy = item_pos[:, 1] - bowl_pos[:, 1]
     inside_x = dx.abs() < _BOWL_HALF_X
     inside_y = dy.abs() < _BOWL_HALF_Y
-    above_bowl_z = item_pos[:, 2] > (env_origins[:, 2] - 1e-3)
-    is_item_above_bowl = inside_x & inside_y & above_bowl_z
+    is_item_above_bowl = inside_x & inside_y
 
     # robot_touching_X — any contact force at a jaw + target-proximity gate.
     any_contact = (F_g >= _TOUCHING_FORCE_LIGHT) | (F_j >= _TOUCHING_FORCE_LIGHT)
@@ -186,27 +183,21 @@ def squint_dense_reward(
     static_robot_reward = 1.0 - torch.tanh(robot_v * 10.0)
     is_robot_static = robot_v <= 0.15
 
-    # P3 fix: align reward-side success with the termination-side definition
-    # (squint_terminations.success) — both should be the same target. The
-    # earlier extra robot-not-touching-item / not-touching-bowl conjuncts
-    # were too restrictive and almost never fired during eval, making the
-    # terminal +9 essentially unreachable through the dense reward path.
-    cube_lin_vel = torch.linalg.norm(cube.data.root_lin_vel_w, dim=-1)
-    is_cube_static = cube_lin_vel <= 0.05
-    success = is_item_above_bowl & is_cube_static
+    # Squint canonical success predicate (place.py:465):
+    #   success = is_item_above_bin & ~robot_touching_item
+    #             & is_robot_static & ~robot_touching_bowl
+    success = (
+        is_item_above_bowl
+        & (~robot_touching_item)
+        & is_robot_static
+        & (~robot_touching_bowl)
+    )
 
-    # ---- State machine ----
+    # ---- State machine (Squint canonical, place.py:516-527) ----
     gripper_open = _gripper_openness(robot)
     is_item_dropped = (~robot_touching_item).float()
 
-    # P4 fix: continuous transport shaping. Once the cube is grasped, give
-    # a dense gradient pulling the cube's xy toward the bowl's xy. Without
-    # this, the policy gets a flat +3 for grasp + 0 incentive to MOVE the
-    # cube toward the bowl until it's already near it. Range: 0 → +2.
-    cube_to_bowl_xy = torch.linalg.norm(item_pos[:, :2] - bowl_pos[:, :2], dim=-1)
-    transport_reward = 2.0 * (1.0 - torch.tanh(5.0 * cube_to_bowl_xy))
-
-    grasped_value = 3.0 + place_reward + transport_reward
+    grasped_value = 3.0 + place_reward
     reward = torch.where(is_item_grasped, grasped_value, reward)
 
     above_value = 4.0 + place_reward + is_item_dropped + gripper_open + static_robot_reward
@@ -214,16 +205,9 @@ def squint_dense_reward(
 
     reward = torch.where(success, torch.full_like(reward, 9.0), reward)
 
-    # ---- Penalties ----
-    # P2 fix: -6 → -2 (tighter gate at 1mm + smaller magnitude). Critic was
-    # learning "descend = catastrophic" because of cumulative -6's during
-    # normal grasp descents that grazed the table proximity gate.
-    reward = reward - 2.0 * robot_touching_table.float()
-    # P1 fix: only penalize bowl contact when we are NOT trying to place.
-    # Otherwise the policy receives -3 every step it enters the bowl region
-    # to drop the cube — which is exactly what we want it to do.
-    bowl_penalty_mask = robot_touching_bowl & (~is_item_above_bowl)
-    reward = reward - 3.0 * bowl_penalty_mask.float()
+    # ---- Penalties (Squint canonical, place.py:530-532) ----
+    reward = reward - 6.0 * robot_touching_table.float()
+    reward = reward - 3.0 * robot_touching_bowl.float()
     reward = reward - 1.0 * (~item_lifted).float()
 
     # NaN guard — keeps the replay buffer clean even if body state goes bad.

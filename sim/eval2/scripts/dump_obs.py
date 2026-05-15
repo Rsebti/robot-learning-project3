@@ -71,7 +71,7 @@ def main():
         f.write(f"  qvel = {robot.data.joint_vel[0].cpu().tolist()}\n")
         # Cube + bin world positions
         scene = env.unwrapped.scene
-        for name in ("cube", "bin_floor"):
+        for name in ("cube", "bowl"):
             if name in scene.rigid_objects:
                 p = scene[name].data.root_pos_w[0].cpu().tolist()
                 f.write(f"  {name:12s} pos_w = {p}\n")

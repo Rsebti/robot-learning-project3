@@ -39,19 +39,19 @@ if TYPE_CHECKING:
 SPAWN_BOX_CENTER = (0.3, 0.0)        # robot frame xy
 SPAWN_BOX_HALF = 0.125               # Squint spawn_box_half_size = 0.25/2 — place.py:189
 
-# Cube spawn box — shrunk so the cube is ALWAYS in the wrist-cam FOV at
-# home pose (audit_spawn_visibility found the wrist cone covers roughly
-# x∈[0.15, 0.31], y∈[-0.09, +0.07] at home; we keep the cube box inside
-# that with margin). The policy therefore never has to "search" for the
-# cube — it sees it from step 0.
-CUBE_SPAWN_BOX_CENTER = (0.21, -0.01)
-CUBE_SPAWN_BOX_HALF = 0.04           # 8×8 cm square
+# Cube spawn box — ALIGNED with Squint canonical (place.py:73-74):
+#   spawn_box_pos = [0.3, 0], spawn_box_half_size = 0.2/2 = 0.1
+# Previous Isaac value (0.21,-0.01)±0.04 was shrunk for wrist-cam FOV
+# visibility, but that diverged from the box ckpt 8 was trained on, which
+# is the natural sim2sim target. Restoring Squint canonical for a clean
+# sim2sim test; the policy must learn to search the cube if needed.
+CUBE_SPAWN_BOX_CENTER = (0.30, 0.0)
+CUBE_SPAWN_BOX_HALF = 0.10           # 20×20 cm square — Squint canonical
 
-# Bowl spawn box — left at the original Squint range; the bowl does NOT
-# need to be visible at home pose because its xyz is added directly to
-# the state vector (see ``bowl_xyz_world`` observation).
+# Bowl spawn box — ALIGNED with Squint canonical (same box as cube,
+# non-overlapping sampling enforced in reset_scene_squint).
 BOWL_SPAWN_BOX_CENTER = (0.30, 0.0)
-BOWL_SPAWN_BOX_HALF = 0.125
+BOWL_SPAWN_BOX_HALF = 0.10           # 20×20 cm square — Squint canonical
 
 CUBE_HALF_SIZE = 0.01                # 2 cm side (user override; Squint mid was 0.0125)
 

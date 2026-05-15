@@ -158,8 +158,8 @@ class SquintNativeSceneCfg(InteractiveSceneCfg):
                 #   - vs gripper/jaw (μ=2.0), min(0.8, 2.0) = 0.8
                 #   - vs table (μ=0.6), min(0.8, 0.6) = 0.6
                 # DR range below is shifted up accordingly (env_cfg).
-                static_friction=0.8,
-                dynamic_friction=0.8,
+                static_friction=0.325,
+                dynamic_friction=0.325,
                 restitution=0.0,
                 friction_combine_mode="min",
                 restitution_combine_mode="min",
@@ -190,8 +190,8 @@ class SquintNativeSceneCfg(InteractiveSceneCfg):
             ),
             physics_material=sim_utils.RigidBodyMaterialCfg(
                 # Squint per-env friction DR mid (uniform [0.4, 0.6] → 0.5).
-                static_friction=0.5,
-                dynamic_friction=0.5,
+                static_friction=0.325,
+                dynamic_friction=0.325,
                 restitution=0.0,
                 friction_combine_mode="min",
                 restitution_combine_mode="min",
@@ -268,12 +268,9 @@ class SquintNativeSceneCfg(InteractiveSceneCfg):
                 roughness=0.9,
             ),
             physics_material=sim_utils.RigidBodyMaterialCfg(
-                # Boosted above Squint's mid (0.225) so combined cube-table
-                # friction is high enough for the gripper to drag/lift
-                # the cube without it sliding off. Effective cube-table
-                # friction = min(cube=0.8, table=0.6) = 0.6.
-                static_friction=0.6,
-                dynamic_friction=0.6,
+                # Squint mid for table_friction_range = (0.05, 0.4) → 0.225.
+                static_friction=0.225,
+                dynamic_friction=0.225,
                 restitution=0.0,
                 friction_combine_mode="min",
                 restitution_combine_mode="min",

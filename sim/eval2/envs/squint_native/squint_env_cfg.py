@@ -185,8 +185,8 @@ class SquintEventsCfg:
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("cube"),
-            "static_friction_range": (0.6, 1.0),
-            "dynamic_friction_range": (0.6, 1.0),
+            "static_friction_range": (0.05, 0.6),
+            "dynamic_friction_range": (0.05, 0.6),
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
             "make_consistent": True,  # dyn ≤ stat
@@ -197,8 +197,8 @@ class SquintEventsCfg:
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("cube_distractor"),
-            "static_friction_range": (0.6, 1.0),
-            "dynamic_friction_range": (0.6, 1.0),
+            "static_friction_range": (0.05, 0.6),
+            "dynamic_friction_range": (0.05, 0.6),
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
             "make_consistent": True,
@@ -289,16 +289,16 @@ class SquintNativePlaceEnvCfg(ManagerBasedRLEnvCfg):
         #   decimation   = 10      (control_freq = 10 Hz)
         #   episode      = 50 control steps = 5.0 s
         # ============================================================
-        # 10 Hz control — matches Squint training (`pd_joint_target_delta_pos`
-        # at control_freq=10 Hz, sim_freq=100 Hz). Required for warmstart from
-        # ckpt 8 which was trained at this rate.
-        # ⚠️ For deploy / GUI viewing, override render_interval = 1 in the
-        # launching script if you want smooth visual playback (200 fps vs 10 fps
-        # viewport). For training, keep render_interval = decimation = 10 so
-        # multi-env throughput isn't crippled by per-substep rendering.
-        self.sim.dt = 1.0 / 100.0
-        self.decimation = 10
-        self.sim.render_interval = self.decimation
+        # 30 Hz control + 120 Hz physics + per-substep rendering — VISUAL
+        # MODE only. Use for deploy / GUI playback. ⚠️ The policy was
+        # trained at 10 Hz so 30 Hz applies 3× the deltas per real second
+        # (faster motion than learned). For TRAINING, revert to:
+        #     self.sim.dt = 1.0 / 100.0
+        #     self.decimation = 10
+        #     self.sim.render_interval = self.decimation
+        self.sim.dt = 1.0 / 120.0
+        self.decimation = 4
+        self.sim.render_interval = 1
         # P5: bumped from 7.5s to 10s. Squint trained on 75 control steps
         # in SAPIEN, but their policy never had to handle our slightly
         # different placement dynamics. 100 control steps gives the policy
@@ -390,6 +390,37 @@ class SquintNativePlaceEnvCfg_PLAY(SquintNativePlaceEnvCfg):
         super().__post_init__()
         self.scene.num_envs = 1
         self.scene.env_spacing = 2.5
+
+
+@configclass
+class SquintNativePlaceEnvCfg_NoDR_PLAY(SquintNativePlaceEnvCfg_PLAY):
+    """Deterministic env for visualization / debug:
+    - single env (PLAY shape)
+    - cube + distractor mass FIXED at 4.5 g (scene default, no DR)
+    - cube + distractor + table frictions FIXED (scene defaults, no DR)
+    - wrist RGB COLOR JITTER disabled (brightness/contrast/saturation
+      ±0.3 normally applied per step is turned OFF here)
+    - qpos observation noise (5°) NOT disabled — that's an obs-level
+      sensor model, not really physics DR. Disable manually below if
+      wanted.
+    - colors still randomize per episode (needed for goal-conditioning)
+    - cube + bowl xy still sample (per-episode variety for viewing)
+
+    Use this to evaluate the policy on a clean, deterministic physics
+    distribution — separates "policy ability" from "robustness to DR".
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Disable the four domain-randomization events. Leaving them in
+        # the cfg as ``None`` makes the ManagerBasedRLEnv just skip them.
+        self.events.randomize_cube_material = None
+        self.events.randomize_distractor_material = None
+        self.events.randomize_cube_mass = None
+        self.events.randomize_distractor_mass = None
+        # Disable wrist RGB color jitter (brightness / contrast / saturation
+        # noise applied to the image observation each step).
+        self.observations.rgb.rgb.params["apply_jitter"] = False
 
 
 @configclass

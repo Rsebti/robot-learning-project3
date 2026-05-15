@@ -79,6 +79,12 @@ def main():
             robot = base.scene["robot"]
             gpr = robot.body_names.index("gripper")
 
+            # Track how many consecutive steps the success predicate has
+            # fired — break out of the episode loop after a short hold so
+            # we can see the placement settle visually then move on.
+            from sim.eval2.envs.squint_native import squint_terminations
+            success_hold = 0
+            ended_on_success = False
             for s in range(args.n_steps):
                 state = obs["policy"][:, :n_state]
                 rgb = obs["rgb"]["rgb"] if isinstance(obs["rgb"], dict) else obs["rgb"]
@@ -92,15 +98,27 @@ def main():
                 if d < min_d: min_d = d
                 if z > max_z: max_z = z
 
+                with torch.no_grad():
+                    succ_now = bool(squint_terminations.success(base)[0].item())
+                if succ_now:
+                    success_hold += 1
+                    if success_hold >= 10:  # ~330 ms at 30 Hz — visual hold
+                        ended_on_success = True
+                        break
+                else:
+                    success_hold = 0
+
                 obs, _, term, trunc, _ = env.step(action)
                 if term.any() or trunc.any():
                     break
+
+            tag = "[OK]" if ended_on_success else ""
 
             print(f"{k:>3d}  {seed:>4d}  "
                   f"{PALETTE[gi] if gi>=0 else '?':>6s}  "
                   f"({cube0[0]:+.3f},{cube0[1]:+.3f})  "
                   f"({bowl_p[0]:+.3f},{bowl_p[1]:+.3f})  "
-                  f"{max_z:>6.3f}  {min_d:>6.3f}", flush=True)
+                  f"{max_z:>6.3f}  {min_d:>6.3f}  {tag}", flush=True)
 
     env.close()
     app.close()
