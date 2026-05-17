@@ -153,7 +153,7 @@
         "robot": {
             "type": "so101_follower_end_effector",
             "id": "so101_follower",
-            "calibration_dir": "/Users/admin/.cache/huggingface/lerobot/calibration/robots/so101_follower",
+            "calibration_dir": "/Users/admin/.cache/huggingface/lerobot/calibration/robots/so_follower",
             "port": "/dev/tty.usbmodem5B141129871",
             "disable_torque_on_disconnect": true,
             "max_relative_target": null,
@@ -186,7 +186,7 @@
         "teleop": {
             "type": "so101_leader",
             "id": "so101_leader",
-            "calibration_dir": "/Users/admin/.cache/huggingface/lerobot/calibration/teleoperators/so101_leader",
+            "calibration_dir": "/Users/admin/.cache/huggingface/lerobot/calibration/teleoperators/so_leader",
             "port": "/dev/tty.usbmodem5B141128171",
             "use_degrees": true
         },
