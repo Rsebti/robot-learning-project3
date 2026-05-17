@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# launch_act_eval1.sh - train ACT on the Eval-1 10D-goal-conditioned dataset.
+# launch_act_eval1.sh - train ACT on the Eval-1 8D-goal-conditioned dataset.
 #
 # Sister of launch_act.sh. Differences vs Eval-2:
-#   - DATASET_REPO_ID    -> hudela390/projet3-eval1-bowl1-v1-cube-goal
-#   - JOB_NAME / POLICY  -> projet3_act_eval1_v1_cube_goal
-#   - env_state is 10D = [color_6, bowl_xy, cube_xy] (LeRobot ACT auto-picks
-#     it up via meta/info.json)
+#   - DATASET_REPO_ID    -> hudela390/projet3-eval1-bowl1-v1-goal
+#   - JOB_NAME / POLICY  -> projet3_act_eval1_v1_no_cube
+#   - env_state is 8D = [color_6, bowl_xy] (LeRobot ACT auto-picks it up via
+#     meta/info.json). cube_xy was dropped after the FK-probe positions used
+#     to build it turned out to be inaccurate by ~12 cm.
 #
 # Usage:
 #   bash train/launch_act_eval1.sh                       # defaults
@@ -19,13 +20,13 @@ NETRC_PATH="${NETRC_PATH:-$HOME/.netrc}"
 
 LEROBOT_TRAIN_BIN="$LEROBOT_SCRIPTS_DIR/.venv/bin/lerobot-train"
 
-DATASET_REPO_ID="${DATASET_REPO_ID:-hudela390/projet3-eval1-bowl1-v1-cube-goal}"
-JOB_NAME="${JOB_NAME:-projet3_act_eval1_v1_cube_goal}"
+DATASET_REPO_ID="${DATASET_REPO_ID:-hudela390/projet3-eval1-bowl1-v1-goal}"
+JOB_NAME="${JOB_NAME:-projet3_act_eval1_v1_no_cube}"
 RUN_NAME="${RUN_NAME:-${JOB_NAME}_$(date +%Y%m%d_%H%M%S)}"
 OUTPUT_DIR="${OUTPUT_DIR:-$OUTPUT_BASE/$RUN_NAME}"
 
 BATCH_SIZE="${BATCH_SIZE:-32}"
-STEPS="${STEPS:-30000}"
+STEPS="${STEPS:-60000}"
 SAVE_FREQ="${SAVE_FREQ:-2000}"
 LOG_FREQ="${LOG_FREQ:-100}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
@@ -75,7 +76,7 @@ uv run accelerate launch \
   --policy.type=act \
   --policy.device=cuda \
   --policy.push_to_hub="${PUSH_TO_HUB:-true}" \
-  --policy.repo_id="${POLICY_REPO_ID:-hudela390/projet3-act-eval1-v1-cube-goal}" \
+  --policy.repo_id="${POLICY_REPO_ID:-hudela390/projet3-act-eval1-v1-no-cube}" \
   --policy.dim_model=256 \
   --policy.n_heads=8 \
   --policy.dim_feedforward=1024 \
