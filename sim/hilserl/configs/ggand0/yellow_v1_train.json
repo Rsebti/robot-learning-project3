@@ -175,7 +175,7 @@
             "ik_damping": 0.1,
             "ik_max_dq": 0.5,
             "locked_joints": [3, 4],
-            "locked_joint_positions": {"3": 57.670, "4": -9.275},
+            "locked_joint_positions": {"3": 99.956, "4": -106.242},
             "end_effector_bounds": {
                 "min": [0.057, -0.244, -0.035],
                 "max": [0.430, 0.286, 0.248]
@@ -208,7 +208,7 @@
             "reset_time_s": 2.0,
             "reset_delay_s": 2.0,
             "use_ik_reset": true,
-            "ik_reset_ee_pos": [0.200, -0.006, 0.144],
+            "ik_reset_ee_pos": [0.174, 0.012, 0.157],
             "random_ee_reset": true,
             "random_ee_range_xy": 0.01,
             "random_ee_range_z": 0.01,
