@@ -90,15 +90,38 @@ $UVRUN python -m lerobot.scripts.rl.gym_manipulator \
 # where the bowl will go. Press ESC immediately to abort the record.
 ```
 
-## Step 3 — Record 2-episode smoke test (~10 min)
+## Step 3 — Record 2-episode smoke test (~10 min) — PIPELINE VERIFIED 2026-05-17
 
-Stay at `num_episodes: 2` and `repo_id: ...-ggand0smoke` until smoke
-passes — this avoids polluting the real v1 dataset.
+Pipeline already verified end-to-end on this Mac on 2026-05-17 (full
+IK reset sequence, leader+follower connect, gripper-cam stream, dataset
+write to lerobot v2.1 format with action.shape=[4] columns
+[delta_x_ee, delta_y_ee, delta_z_ee, gripper_delta]). The smoke
+session ended with `total_episodes: 2, total_frames: 399` and clean
+exit. Your job in this step is just to re-run with the leader actually
+being driven so the smoke produces non-empty episodes.
+
+**Before launching:** clear any stale cache from previous attempts —
+lerobot raises `FileExistsError` if the dataset dir already exists.
+
+```bash
+rm -rf ~/.cache/huggingface/lerobot/osammotg1/projet3-hilserl-yellow-v1-ggand0smoke
+```
+
+Then launch:
 
 ```bash
 $UVRUN python -m lerobot.scripts.rl.gym_manipulator \
     --config_path $REPO/sim/hilserl/configs/ggand0/yellow_v1_record.json
 ```
+
+**At the "Press ENTER to use provided calibration file..." prompt** (it
+will appear because our leader's motor EEPROM drifted from the JSON):
+press ENTER. The motor calibration file is correct; the runtime
+comparison is just a sanity warning we ignore.
+
+**Then click the camera-feed cv2 window** so keyboard input registers
+(macOS Accessibility for pynput would also work — see "Known gotchas"
+in `notes/ggand0_setup_mac.md` — but cv2 is simpler).
 
 Per-episode workflow:
 - Drive the leader to teleop the follower.

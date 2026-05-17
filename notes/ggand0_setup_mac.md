@@ -40,7 +40,33 @@ file "$REPO/sim/hilserl/assets/so101_mjcf/assets/moving_jaw_so101_v1.stl"
 # Expected: "data" (binary STL). NOT "ASCII text" (LFS pointer).
 ```
 
-## 1. Patch ggand0's pyproject.toml — kill the CUDA / ROCm pins (DONE on this Mac, 2026-05-17)
+## 1a. Patch the lerobot fork's gym_manipulator.py — hardcoded calibration path (DONE on this Mac, 2026-05-17)
+
+ggand0's `feat/hil-serl` branch contains a literal-string hardcode of his
+own home-dir calibration path at
+`src/lerobot/scripts/rl/gym_manipulator.py:85`:
+
+```python
+_IK_CALIBRATION_PATH = "/home/gota/.cache/huggingface/lerobot/calibration/robots/so101_follower/ggando_so101_follower.json"
+```
+
+The function `_load_ik_calibration()` (lines 90-97) reads `range_min` /
+`range_max` from this JSON to clamp IK-driven motor commands. If the
+path doesn't exist, you get `FileNotFoundError` AFTER the IK reset
+starts moving the arm — partial-init, very annoying.
+
+Fix applied on this Mac:
+
+```python
+_IK_CALIBRATION_PATH = "/Users/admin/.cache/huggingface/lerobot/calibration/robots/so_follower/so101_follower.json"
+```
+
+(Note: `so_follower/so101_follower.json`, not `so101_follower/...`.
+The lerobot convention is directory by robot family, file by ID.)
+
+Re-apply this manually after any `git pull` of the fork.
+
+## 1b. Patch ggand0's pyproject.toml — kill the CUDA / ROCm pins (DONE on this Mac, 2026-05-17)
 
 ggand0 pins torch to CUDA-130 wheels in `hil-serl-so101/pyproject.toml`,
 AND the sibling lerobot fork pins to ROCm-6.4 wheels in
