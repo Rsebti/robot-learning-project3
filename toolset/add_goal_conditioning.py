@@ -43,7 +43,10 @@ from huggingface_hub import HfApi, snapshot_download
 
 
 COLORS = ["yellow", "orange", "red", "blue", "green", "violet"]   # canonical order
-ENV_DIM = len(COLORS) + 2                                          # 6 + 2 = 8
+# Schema is set in main() depending on whether cube_positions.csv is given:
+#   no cube_xy: env_state = [color_6, bowl_x, bowl_y]              (8D, eval-2)
+#   with cube_xy: env_state = [color_6, bowl_x, bowl_y, cube_x, cube_y]  (10D, eval-1)
+ENV_DIM = len(COLORS) + 2
 ENV_NAMES = [f"color_{c}" for c in COLORS] + ["bowl_x", "bowl_y"]
 
 TASK_PAT = re.compile(
@@ -92,15 +95,23 @@ def build_task_map(tasks_parquet: Path) -> dict[int, np.ndarray]:
 # Data parquet augmentation
 # --------------------------------------------------------------------------
 
-def augment_data_parquets(data_dir: Path, task_map: dict[int, np.ndarray]):
+def augment_data_parquets(data_dir: Path, task_map: dict[int, np.ndarray],
+                            cube_map: dict[int, tuple[float, float]] | None = None):
     parquets = sorted(data_dir.rglob("*.parquet"))
     print(f"[goal] {len(parquets)} data shard(s) to augment")
     for pf in parquets:
         df = pd.read_parquet(pf)
-        env_states = np.stack(
-            [task_map[int(tid)] for tid in df["task_index"].values]
-        )   # (N, 8)
-        # Store as object column with one np.array per row (matches observation.state pattern)
+        if cube_map is None:
+            env_states = np.stack(
+                [task_map[int(tid)] for tid in df["task_index"].values]
+            )
+        else:
+            rows = []
+            for tid, ep in zip(df["task_index"].values, df["episode_index"].values):
+                base = task_map[int(tid)]                  # 8D
+                cx, cy = cube_map.get(int(ep), (0.0, 0.0))  # default 0,0 if missing
+                rows.append(np.concatenate([base, [cx, cy]]).astype(np.float32))
+            env_states = np.stack(rows)
         df["observation.environment_state"] = list(env_states.astype(np.float32))
         df.to_parquet(pf, index=False)
         print(f"  {pf.relative_to(data_dir.parent)}: +{len(df)} rows")
@@ -214,11 +225,27 @@ def main():
     parser.add_argument("--src_repo", required=True)
     parser.add_argument("--dst_repo", required=True)
     parser.add_argument("--cache_dir", default=None)
+    parser.add_argument("--cube_positions_csv", default=None,
+                        help="Optional CSV with columns episode,x,y (meters). "
+                             "When given, env_state becomes 10D = [color_6, bowl_xy, cube_xy].")
     parser.add_argument("--no_push", action="store_true",
                         help="Don't push to HF, just write local copy")
     parser.add_argument("--private", action="store_true",
                         help="Push as private repo (default: public)")
     args = parser.parse_args()
+
+    # Schema: when cube_xy is provided, env_state becomes 10D. task_map stays
+    # 8D (color + bowl); cube_xy gets concatenated per-frame in the augmenter.
+    # ENV_DIM/ENV_NAMES are bumped AFTER task_map is built so info.json and
+    # stats.json reflect the final 10D schema.
+    cube_map: dict[int, tuple[float, float]] | None = None
+    if args.cube_positions_csv:
+        cdf = pd.read_csv(args.cube_positions_csv)
+        cube_map = {int(r["episode"]): (float(r["x"]), float(r["y"])) for _, r in cdf.iterrows()}
+        print(f"[goal] cube_xy from {args.cube_positions_csv}: {len(cube_map)} episodes -> "
+              f"env_state will be 10D")
+    else:
+        print(f"[goal] no cube_positions_csv -> env_state stays 8D (color + bowl)")
 
     print(f"[goal] Downloading {args.src_repo} ...")
     local_dir = Path(snapshot_download(
@@ -246,7 +273,15 @@ def main():
               f"bowl_xy=({vec[6]:+.3f}, {vec[7]:+.3f}) m")
 
     print()
-    augment_data_parquets(work_dir / "data", task_map)
+    augment_data_parquets(work_dir / "data", task_map, cube_map=cube_map)
+
+    # Now that env_state is its final width on disk, bump the global schema
+    # so info.json + stats.json declare the correct dims (10D if cube_xy, else 8D).
+    if cube_map is not None:
+        global ENV_DIM, ENV_NAMES
+        ENV_DIM = len(COLORS) + 4
+        ENV_NAMES = [f"color_{c}" for c in COLORS] + ["bowl_x", "bowl_y", "cube_x", "cube_y"]
+
     augment_episodes_meta(work_dir / "meta" / "episodes", work_dir / "data", task_map)
     update_info_json(work_dir / "meta" / "info.json")
     update_stats_json(work_dir / "meta" / "stats.json", work_dir / "data")
