@@ -27,78 +27,107 @@ cd ~/Desktop/eval-ggand0
 git clone https://github.com/ggand0/hil-serl-so101
 git clone https://github.com/ggand0/lerobot && cd lerobot && git checkout feat/hil-serl && cd ..
 git clone https://github.com/ggand0/pick-101
+cd pick-101 && git lfs install --local && git lfs pull && cd ..  # ← required for STL meshes
 ```
 
-## 1. Patch ggand0's pyproject.toml — drop the cu130 torch pin
-
-ggand0's `hil-serl-so101/pyproject.toml` pins torch to cu130 wheels via
-`[tool.uv.sources]` + a `pytorch-cuda` index. CUDA wheels don't run on
-Mac arm64. We need PyPI's default wheels (which give Mac MPS-capable
-torch).
+Then re-copy the MJCF meshes into our gitignored slot:
 
 ```bash
-cp ~/Desktop/eval-ggand0/hil-serl-so101/pyproject.toml \
-   ~/Desktop/eval-ggand0/hil-serl-so101/pyproject.toml.bak
+REPO="/Users/admin/Documents/ETH/M4/Robot Learning /Project S101/robot-learning-project3"
+cp ~/Desktop/eval-ggand0/pick-101/models/so101/assets/*.stl \
+   "$REPO/sim/hilserl/assets/so101_mjcf/assets/"
+file "$REPO/sim/hilserl/assets/so101_mjcf/assets/moving_jaw_so101_v1.stl"
+# Expected: "data" (binary STL). NOT "ASCII text" (LFS pointer).
 ```
 
-Then edit `~/Desktop/eval-ggand0/hil-serl-so101/pyproject.toml`:
+## 1. Patch ggand0's pyproject.toml — kill the CUDA / ROCm pins (DONE on this Mac, 2026-05-17)
 
-1. **Delete** the existing `[tool.uv.sources]` block (lines ~42-52) and
-   the `[[tool.uv.index]]` block at the bottom.
-2. **Replace** with just the lerobot path-editable source:
-   ```toml
-   [tool.uv.sources]
-   lerobot = { path = "../lerobot", editable = true }
-   ```
+ggand0 pins torch to CUDA-130 wheels in `hil-serl-so101/pyproject.toml`,
+AND the sibling lerobot fork pins to ROCm-6.4 wheels in
+`lerobot/pyproject.toml`. Neither works on Mac arm64. We need PyPI's
+default wheels (Mac MPS-capable).
 
-(This keeps the lerobot fork as a sibling-editable install while letting
-torch resolve from PyPI defaults.)
+We don't touch the lerobot fork's pyproject (it's external untrusted
+code per the safety classifier). Instead, override at the root project
+level — uv's `override-dependencies` neutralizes the sibling pin.
 
-## 2. Sync the venv
+Current state of `~/Desktop/eval-ggand0/hil-serl-so101/pyproject.toml`
+(backup at `.toml.bak`):
+
+```toml
+[tool.uv.sources]
+lerobot = { path = "../lerobot", editable = true }
+
+[tool.uv]
+override-dependencies = [
+    "opencv-python-headless>=4.8.0 ; sys_platform == 'never'",
+    "torch>=2.4.0,<3",
+    "torchvision>=0.19.0,<1",
+    "torchaudio>=2.4.0,<3",
+    "pytorch-triton-rocm ; sys_platform == 'never'",
+]
+```
+
+The original `[tool.uv.sources]` torch/torchvision/torchaudio entries
+and the `[[tool.uv.index]] name = "pytorch-cuda"` block were removed.
+The `pytorch-triton-rocm` override neutralizes the lerobot fork's
+ROCm-only triton dep on darwin.
+
+If you need to redo this on a fresh clone of `hil-serl-so101`, apply
+the same edit by hand.
+
+## 2. Sync the venv (DONE on this Mac, 2026-05-17 — verified)
 
 ```bash
 cd ~/Desktop/eval-ggand0/hil-serl-so101
 uv sync
 ```
 
-Expected: ~1.5 GB download (torch, torchvision, opencv, mujoco, placo,
-timm, scipy, etc.), ~5–10 min depending on network. Creates `.venv/`
-inside `hil-serl-so101/`.
+Verified on this Mac: 186 packages resolved, torch 2.12.0 installed
+(PyPI default arm64 build with MPS), lerobot 0.3.2 installed from the
+sibling editable fork. Sync took ~30 s on a warm pip cache. `.venv/`
+lives at `~/Desktop/eval-ggand0/hil-serl-so101/.venv`.
 
-If it fails:
-- **`No solution found`** — ggand0's `lerobot[hilserl]` extras may require
-  pins we don't have. Try `uv sync --extra hilserl` explicitly.
-- **`Couldn't find Python 3.10+`** — `uv python install 3.10` first.
-- **mujoco wheel mismatch** on arm64 — should not happen, but if it does,
-  `uv pip install mujoco==3.x.x` separately into the venv.
+If you need to redo this on a different machine:
+- **`No solution found`** — `lerobot[hilserl]` extras may require pins
+  we don't have. Try `uv sync --extra hilserl` explicitly.
+- **`Couldn't find Python 3.10+`** — `uv python install 3.13` first
+  (we resolved to CPython 3.13.12 on this Mac).
+- **`Distribution torch==X+rocm` can't be installed on darwin** — the
+  override-dependencies block in step 1 wasn't applied. Re-check the
+  pyproject.
 
-## 3. Smoke-test the install
+## 3. Smoke-test the install (DONE on this Mac, 2026-05-17 — all passed)
 
 ```bash
-cd ~/Desktop/eval-ggand0/hil-serl-so101
-
-# Lerobot loads, from the fork (should say 0.3.2, NOT 0.5.2)
-uv run python -c "import lerobot; print('lerobot:', lerobot.__version__)"
-# Expected: lerobot: 0.3.2 (or 0.3.2.dev — anything starting with 0.3)
-
-# The custom robot class loads
-uv run python -c "from lerobot.robots.so101_follower.so101_follower_end_effector import SO101FollowerEndEffector; print('so101_follower_end_effector OK')"
-
-# MuJoCo can read our vendored model
-uv run python -c "
-import mujoco
+cd ~/Desktop/eval-ggand0/hil-serl-so101 && uv run python -c "
+import lerobot, torch, mujoco, numpy as np
+print('lerobot:', lerobot.__version__)
+print('torch:', torch.__version__, 'MPS:', torch.backends.mps.is_available())
 m = mujoco.MjModel.from_xml_path('/Users/admin/Documents/ETH/M4/Robot Learning /Project S101/robot-learning-project3/sim/hilserl/assets/so101_mjcf/so101_new_calib.xml')
-print('MuJoCo OK,', m.njnt, 'joints')
+print('MuJoCo:', m.njnt, 'joints,', m.nbody, 'bodies')
+ee = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, 'gripperframe')
+data = mujoco.MjData(m); mujoco.mj_forward(m, data)
+print('FK at qpos=0:', data.site_xpos[ee].round(4), 'm')
+from lerobot.robots.so101_follower.so101_follower_end_effector import SO101FollowerEndEffector
+import lerobot.scripts.rl.gym_manipulator
+print('All imports OK')
 "
-
-# Gym manipulator entrypoint exists
-uv run python -c "import lerobot.scripts.rl.gym_manipulator; print('gym_manipulator OK')"
-
-# Torch can target MPS
-uv run python -c "import torch; print('MPS available:', torch.backends.mps.is_available())"
 ```
 
-If all four print, the venv is ready.
+Recorded output on this Mac:
+```
+lerobot: 0.3.2
+torch: 2.12.0 MPS: True
+MuJoCo: 6 joints, 8 bodies
+FK at qpos=0: [ 0.3914 -0.0002  0.2344] m
+All imports OK
+```
+
+The FK position at all-zero joints (~0.39, 0.0, 0.23 m) is the
+"arm-vertical-stretched-up" pose for the SO-101 — sanity-checked. If
+the numbers differ wildly on your machine, the meshes weren't pulled
+via LFS (step 0).
 
 ## 4. Verify access to our configs
 

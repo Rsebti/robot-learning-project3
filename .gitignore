@@ -246,3 +246,8 @@ play_logs/
 # HIL-SERL: SO-101 mesh assets (heavy binaries from MuammerBay/isaac_so_arm101).
 # The URDF and README are committed; meshes are regenerable per assets/README.md.
 sim/hilserl/assets/so101/urdf/assets/*.stl
+
+# HIL-SERL: SO-101 MJCF mesh assets (heavy binaries, LFS-backed in ggand0/pick-101).
+# The MJCF XMLs, .part files, and README are committed; STLs (15 MB) are fetched
+# via the LFS pull procedure in sim/hilserl/assets/so101_mjcf/README.md.
+sim/hilserl/assets/so101_mjcf/assets/*.stl

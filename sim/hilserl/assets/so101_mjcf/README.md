@@ -17,10 +17,32 @@ here.
   experiments; for real-robot IK only the joint kinematics matter so
   either file works as `mujoco_model_path`. We default to
   `so101_new_calib.xml` for the real-robot configs.
-- `assets/*.stl` (14 files, ~108 KB total, **committed** because they
-  are small) — mesh files referenced by `meshdir="assets"` in the XML.
-- `assets/*.part` (14 files) — Onshape-to-robot intermediate files,
-  vendored for completeness.
+- `assets/*.stl` (14 files, **~15 MB total, gitignored** — fetch via
+  the LFS procedure below) — mesh files referenced by `meshdir="assets"`
+  in the XML. MuJoCo needs binary STLs to load the model; LFS pointer
+  text files trigger `stl_decoder: perhaps this is an ASCII file?`.
+- `assets/*.part` (14 files, committed) — Onshape-to-robot intermediate
+  files. Small, vendored for completeness.
+
+## Fetching the meshes (one-time, ~30 s)
+
+The upstream `ggand0/pick-101` repo stores STLs via Git LFS, so a plain
+`git clone` only pulls 130-byte pointer files. To get the real binaries:
+
+```bash
+# From wherever you cloned pick-101 (handoff used ~/Desktop/eval-ggand0/pick-101):
+cd ~/Desktop/eval-ggand0/pick-101
+git lfs install --local
+git lfs pull
+
+# Then re-copy the STLs over the gitignored slot in this repo:
+REPO="/Users/admin/Documents/ETH/M4/Robot Learning /Project S101/robot-learning-project3"
+cp models/so101/assets/*.stl "$REPO/sim/hilserl/assets/so101_mjcf/assets/"
+
+# Verify:
+file "$REPO/sim/hilserl/assets/so101_mjcf/assets/moving_jaw_so101_v1.stl"
+# Expected: "data" (binary). NOT "ASCII text" (LFS pointer).
+```
 
 ## Provenance
 
