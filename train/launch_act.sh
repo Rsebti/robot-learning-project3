@@ -25,8 +25,8 @@ NETRC_PATH="${NETRC_PATH:-$HOME/.netrc}"
 
 LEROBOT_TRAIN_BIN="$LEROBOT_SCRIPTS_DIR/.venv/bin/lerobot-train"
 
-DATASET_REPO_ID="${DATASET_REPO_ID:-hudela390/projet3-eval1-bowl1-v1-trimmed}"
-JOB_NAME="${JOB_NAME:-projet3_act_eval1_v1}"
+DATASET_REPO_ID="${DATASET_REPO_ID:-hudela390/projet3-eval2-v1-goal}"
+JOB_NAME="${JOB_NAME:-projet3_act_eval2_v1_goal}"
 RUN_NAME="${RUN_NAME:-${JOB_NAME}_$(date +%Y%m%d_%H%M%S)}"
 OUTPUT_DIR="${OUTPUT_DIR:-$OUTPUT_BASE/$RUN_NAME}"
 
@@ -84,7 +84,7 @@ uv run accelerate launch \
   --policy.type=act \
   --policy.device=cuda \
   --policy.push_to_hub="${PUSH_TO_HUB:-true}" \
-  --policy.repo_id="${POLICY_REPO_ID:-hudela390/projet3-act-eval1-v1}" \
+  --policy.repo_id="${POLICY_REPO_ID:-hudela390/projet3-act-eval2-v1-goal}" \
   --policy.dim_model=256 \
   --policy.n_heads=8 \
   --policy.dim_feedforward=1024 \
