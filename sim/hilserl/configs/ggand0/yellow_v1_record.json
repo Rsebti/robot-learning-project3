@@ -1,5 +1,4 @@
 {
-    "_comment": "ggand0/hil-serl-so101 record config — yellow v1 (single color, Eval 2). Schema = lerobot 0.3.2 (ggand0 fork). Paths are Mac-absolute; adapt for other machines via prepare_machine.py.",
     "type": "gym_manipulator",
     "name": "real_robot",
     "task": "hilserl_pick_yellow_v1",

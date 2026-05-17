@@ -1,5 +1,4 @@
 {
-    "_comment": "ggand0/hil-serl-so101 SAC train config — yellow v1. Schema = lerobot 0.3.2. Run actor + learner on Mac for v1 (MPS). The actor must run wherever the robot is plugged in.",
     "output_dir": "/Users/admin/Documents/ETH/M4/Robot Learning /Project S101/robot-learning-project3/outputs/hilserl_yellow_v1",
     "job_name": "hilserl_yellow_v1",
     "resume": true,
