@@ -51,6 +51,6 @@ From `notes/hilserl_eval2_plan.md` plan-eng-review v2 (do NOT relitigate):
 
 ## Things still TODO before recording
 
-1. Verify the locked wrist_flex/wrist_roll target (`{"3": 90.0, "4": 90.0}`) physically points the gripper downward toward the table on our calibration. Our home pose has wrist_flex=57.7° and wrist_roll=−9.275°, so 90°/90° may NOT correspond to a clean vertical gripper on this calibration. If it doesn't, override `locked_joint_positions` to our home values.
+1. **DONE 2026-05-17 — locked_joint_positions overridden to our home values.** Ggand0's default `{"3": 90.0, "4": 90.0}` is **mechanically impossible** on our SO-101: the wrist-mounted camera collides with the robot base when wrist_roll approaches +90°. Empirical: a live slew with `max_relative_target=8.0` stalled at wrist_roll=+50.24° and wrist_flex=+80.5° (collision plateau, not soft-bound). Current value `{"3": 57.670, "4": -9.275}` matches the calibrated home pose from `lerobot-find-joint-limits` and was verified reachable. Whether THAT pose points the gripper usefully downward for grasping is a separate visual question — observe during the smoke record.
 2. Replace `ik_reset_ee_pos: [0.25, 0.0, 0.07]` with the EE position above our actual bowl (D2). We need to FK our `fixed_reset_joint_positions` through the MJCF to get this.
 3. Pick a smoke-test `repo_id` we actually own write access for. Current `osammotg1/projet3-hilserl-yellow-v1-ggand0smoke` matches the convention.

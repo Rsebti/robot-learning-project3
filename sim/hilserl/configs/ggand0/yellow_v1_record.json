@@ -51,7 +51,7 @@
         "ik_damping": 0.1,
         "ik_max_dq": 0.5,
         "locked_joints": [3, 4],
-        "locked_joint_positions": {"3": 90.0, "4": 90.0},
+        "locked_joint_positions": {"3": 57.670, "4": -9.275},
         "end_effector_bounds": {
             "min": [0.057, -0.244, -0.035],
             "max": [0.430, 0.286, 0.248]

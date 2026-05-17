@@ -37,44 +37,36 @@ print('gripperframe site id:', mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, 'g
 # gripperframe site id should be >= 0 (not -1)
 ```
 
-## Step 1 — Verify locked-wrist orientation (~10 min)
+## Step 1 — Verify locked-wrist orientation (~10 min) — ALREADY DONE 2026-05-17
 
-ggand0's IK locks `wrist_flex` (joint 3) and `wrist_roll` (joint 4) at
-fixed angles. We left their defaults `{"3": 90.0, "4": 90.0}` in
-`yellow_v1_record.json`. On our calibration, our home pose has
-`wrist_flex=57.7°` and `wrist_roll=−9.275°` — so 90°/90° may NOT
-point the gripper vertically downward on this Mac.
+**⚠️ DO NOT command the follower to `wrist_roll=+90°` or `wrist_flex=+90°` on this SO-101.** The wrist-mounted camera physically collides with the robot base, plateauing the slew at wrist_roll≈+50°, wrist_flex≈+80°. Verified empirically by an in-session probe (Claude, 2026-05-17): a 60-iter slew with `max_relative_target=8` stalled flat at those values with no torque overload.
 
-```bash
-# Move the follower to (wrist_flex=90, wrist_roll=90) and visually inspect.
-uv run python <<'EOF'
-import time
-from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
-from lerobot.robots.so101_follower.so101_follower import SO101Follower
-cfg = SO101FollowerConfig(
-    port="/dev/tty.usbmodem5B141129871",
-    id="so101_follower",
-    use_degrees=True,
-    calibration_dir="/Users/admin/.cache/huggingface/lerobot/calibration/robots/so101_follower",
-    cameras={},
-)
-r = SO101Follower(cfg)
-r.connect()
-home = {"shoulder_pan.pos": -2.593, "shoulder_lift.pos": -95.429,
-        "elbow_flex.pos": 97.670, "wrist_flex.pos": 90.0,
-        "wrist_roll.pos": 90.0, "gripper.pos": 50.0}
-r.send_action(home)
-time.sleep(2)
-input("Look at the gripper. Is it pointing straight down? (enter to disconnect)")
-r.disconnect()
-EOF
+The configs `yellow_v1_record.json` and `yellow_v1_train.json` have already been corrected to use our calibrated home values:
+
+```json
+"locked_joint_positions": {"3": 57.670, "4": -9.275}
 ```
 
-If yes → leave configs as-is.
-If no → override `locked_joint_positions` in BOTH `yellow_v1_record.json`
-and `yellow_v1_train.json` to the angles where the gripper is vertical.
-A common substitute: `{"3": 90.0, "4": 0.0}` (only flex points down,
-roll at calibration zero). Test iteratively.
+These were verified reachable in the same probe (the arm cleanly converged to wrist_flex=58.37°, wrist_roll=−9.63° from the collision pose, slewing AWAY from the base).
+
+What you still need to do at the robot (~2 min visual check): with the arm at home, **does the gripper point usefully toward the table for grasping**? The grasp doesn't need to be perfectly vertical — what matters is whether the jaws can close around a cube on the table without pushing it sideways. If not, the locked_wrist values need a different tuning that respects the camera-collision envelope.
+
+If you need to re-probe (for instance after recalibration), use this
+**safe** procedure that backs off automatically if the slew stalls:
+
+```bash
+# /tmp/probe_safe_home.py was used during the original session;
+# regenerate it from notes if needed. The pattern:
+#   - SO101FollowerConfig(max_relative_target=8.0, ...)
+#   - Use Path() not str for calibration_dir
+#   - feed `<<< ""` to swallow the "press ENTER for calibration" prompt
+#   - Loop r.send_action(target); time.sleep(0.10) up to 60 times
+#   - Watch for the wrist values to plateau (= collision); STOP and
+#     command a target that goes AWAY from the plateau direction.
+#
+# Hard rule on this SO-101: never request wrist_roll > +45° or
+# wrist_flex > +75° unless you've removed the wrist camera.
+```
 
 ## Step 2 — IK reset pose calibration (~5 min)
 
