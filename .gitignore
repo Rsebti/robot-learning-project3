@@ -242,3 +242,7 @@ play_logs/
 # Isaac Sim / Omniverse runtime cache
 *.dmp
 .kit_logs/
+
+# HIL-SERL: SO-101 mesh assets (heavy binaries from MuammerBay/isaac_so_arm101).
+# The URDF and README are committed; meshes are regenerable per assets/README.md.
+sim/hilserl/assets/so101/urdf/assets/*.stl
