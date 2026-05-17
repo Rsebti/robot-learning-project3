@@ -208,7 +208,7 @@
             "reset_time_s": 2.0,
             "reset_delay_s": 2.0,
             "use_ik_reset": true,
-            "ik_reset_ee_pos": [0.25, 0.0, 0.07],
+            "ik_reset_ee_pos": [0.296, 0.175, 0.020],
             "random_ee_reset": true,
             "random_ee_range_xy": 0.01,
             "random_ee_range_z": 0.01,
