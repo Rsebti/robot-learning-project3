@@ -105,17 +105,49 @@ def main() -> int:
     print("[probe] camera open at index 0. Press 's' to save a pose, 'q' to quit.")
 
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    cv2.namedWindow("reset_pose_probe", cv2.WINDOW_AUTOSIZE)
+    WINDOW = "reset_pose_probe"
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW, 800, 600)
+    cv2.moveWindow(WINDOW, 100, 100)  # force on-screen; macOS hides AUTOSIZE windows behind
+    cv2.setWindowProperty(WINDOW, cv2.WND_PROP_TOPMOST, 1)
+    # Show a placeholder immediately so the window definitely appears even
+    # before the first camera frame (in case macOS is still prompting for
+    # camera permission).
+    placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.putText(
+        placeholder,
+        "Opening wrist camera (grant Camera permission if prompted)...",
+        (20, 240),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.imshow(WINDOW, placeholder)
+    cv2.waitKey(1)
+    print("[probe] window opened — look for 'reset_pose_probe' (top-left corner of screen).")
 
     saved_count = 0
     last_save_ts = 0.0
+    first_frame_seen = False
+    last_heartbeat = time.time()
 
     try:
         while True:
             ok, frame = cap.read()
             if not ok:
-                time.sleep(0.05)
+                cv2.imshow(WINDOW, placeholder)
+                if cv2.waitKey(20) & 0xFF == ord("q"):
+                    break
+                if time.time() - last_heartbeat > 2.0:
+                    print("[probe] still waiting for first camera frame... "
+                          "(check macOS Settings > Privacy > Camera if this persists)")
+                    last_heartbeat = time.time()
                 continue
+            if not first_frame_seen:
+                print("[probe] first camera frame received.")
+                first_frame_seen = True
 
             # Read joints
             obs = r.get_observation()
