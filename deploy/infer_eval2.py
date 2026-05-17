@@ -113,9 +113,17 @@ def _prepare_obs(robot_obs: dict, env_state_np: np.ndarray, device: str) -> dict
 
 
 def run_episode(robot, policy, env_state_np: np.ndarray,
-                 n_steps: int, fps: int, device: str):
+                 n_steps: int, fps: int, device: str,
+                 max_delta_deg: float = 8.0, abort_if_normalized: bool = True):
+    """
+    Safety knobs:
+      max_delta_deg: cap per-frame joint move; tames any single-frame spike.
+      abort_if_normalized: if the first action looks like normalized values
+          (max |a| < 5), refuse to send anything to the robot.
+    """
     period = 1.0 / fps
     policy.reset()
+    prev_action = None
     for step in range(n_steps):
         t0 = time.time()
         raw_obs = robot.capture_observation()
@@ -125,7 +133,23 @@ def run_episode(robot, policy, env_state_np: np.ndarray,
             action = policy.select_action(obs)
         action_np = action.squeeze(0).cpu().numpy()
 
+        if step == 0 and abort_if_normalized and float(np.max(np.abs(action_np))) < 5.0:
+            raise RuntimeError(
+                f"First action looks NORMALIZED (max |a|={np.max(np.abs(action_np)):.3f} < 5). "
+                f"Refusing to drive robot. Values: {action_np.tolist()}. "
+                f"Disable this check with abort_if_normalized=False if you're sure."
+            )
+
+        # Per-joint delta clamp vs last commanded action
+        if prev_action is not None:
+            delta = action_np - prev_action
+            big = np.abs(delta) > max_delta_deg
+            if big.any():
+                action_np = prev_action + np.clip(delta, -max_delta_deg, max_delta_deg)
+                print(f"  step {step:4d}: clamped delta on joints {np.where(big)[0].tolist()}")
+
         robot.send_action(torch.from_numpy(action_np))
+        prev_action = action_np
 
         elapsed = time.time() - t0
         if elapsed < period:
@@ -150,6 +174,8 @@ def main():
     parser.add_argument("--num_episodes",  type=int, default=1)
     parser.add_argument("--reset_time_s",  type=float, default=10.0)
     parser.add_argument("--device",        default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--dry_run",       action="store_true",
+                         help="Load policy + run ONE inference with synthetic obs, no robot")
     args = parser.parse_args()
 
     print(f"[infer] policy:        {args.policy_path}")
@@ -162,6 +188,35 @@ def main():
 
     print("[infer] Loading policy ...")
     policy = _load_policy(args.policy_path, args.device)
+
+    if args.dry_run:
+        print("\n[infer] DRY RUN -- no robot, synthetic obs.")
+        synth = {
+            "observation.state":           torch.zeros(6),
+            "observation.images.wrist":    torch.zeros(480, 640, 3, dtype=torch.uint8),
+        }
+        obs = _prepare_obs(synth, env_state, args.device)
+        print(f"[infer] obs keys: {list(obs.keys())}")
+        for k, v in obs.items():
+            print(f"  {k}: shape={tuple(v.shape)}, dtype={v.dtype}, device={v.device}")
+        policy.reset()
+        with torch.inference_mode():
+            action = policy.select_action(obs)
+        action_np = action.squeeze().cpu().numpy()
+        print(f"[infer] action: shape={tuple(action.shape)}, values={action_np.round(3).tolist()}")
+        max_abs = float(np.max(np.abs(action_np)))
+        print(f"[infer] max |action| = {max_abs:.3f}")
+        if max_abs < 5.0:
+            print(f"[infer] !! WARNING: action looks NORMALIZED (max |a| < 5).")
+            print(f"[infer]    The policy is likely returning post-normalization values.")
+            print(f"[infer]    DO NOT run on the real robot until this is fixed.")
+        elif max_abs > 200.0:
+            print(f"[infer] !! WARNING: action magnitude exceptionally large.")
+            print(f"[infer]    Inspect values before running on robot.")
+        else:
+            print(f"[infer] OK -- action magnitude in plausible joint-angle range.")
+        print("[infer] Dry run done.")
+        return
 
     print(f"[infer] Connecting to follower on {args.follower_port} ...")
     robot = _make_robot(args.follower_port, args.camera_index, args.fps)
