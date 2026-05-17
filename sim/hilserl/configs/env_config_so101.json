@@ -2,7 +2,6 @@
   "mode": "record",
   "device": "mps",
   "env": {
-    "type": "gym_manipulator",
     "name": "real_robot",
     "task": "hilserl_pick_yellow_v1",
     "fps": 10,
@@ -47,14 +46,14 @@
         "reset_time_s": 5.0,
         "control_time_s": 20.0,
         "terminate_on_success": true,
-        "fixed_reset_joint_positions": null
+        "fixed_reset_joint_positions": [-2.593, -95.429, 97.670, 57.670, -9.275, 0.0]
       },
       "inverse_kinematics": {
         "urdf_path": "sim/hilserl/assets/so101/urdf/so_arm101.urdf",
         "target_frame_name": "gripper_frame_link",
         "end_effector_bounds": {
-          "min": [-0.30, -0.30, 0.02],
-          "max": [0.50, 0.30, 0.40]
+          "min": [0.057, -0.244, -0.035],
+          "max": [0.430, 0.286, 0.248]
         },
         "end_effector_step_sizes": {
           "x": 0.02,

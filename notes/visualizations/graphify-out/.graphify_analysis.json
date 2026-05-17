@@ -1,0 +1,217 @@
+{
+  "communities": {
+    "0": [
+      "generate_smolvla_walkthrough_py",
+      "visualizations_generate_smolvla_walkthrough_add_arrow",
+      "visualizations_generate_smolvla_walkthrough_add_box",
+      "visualizations_generate_smolvla_walkthrough_b64_png",
+      "visualizations_generate_smolvla_walkthrough_fig_act_vs_smolvla",
+      "visualizations_generate_smolvla_walkthrough_fig_finetune_pipeline",
+      "visualizations_generate_smolvla_walkthrough_fig_performance_numbers",
+      "visualizations_generate_smolvla_walkthrough_fig_smolvla_arch",
+      "visualizations_generate_smolvla_walkthrough_fig_two_cube_decision",
+      "visualizations_generate_smolvla_walkthrough_main",
+      "visualizations_generate_smolvla_walkthrough_rationale_50"
+    ],
+    "1": [
+      "brev_h100",
+      "camera_mismatch_risk",
+      "deploy_infer_sh",
+      "finetuning",
+      "five_step_pipeline",
+      "lerobot_smolvla_base",
+      "policy_path_override",
+      "pretraining",
+      "top_wrist_views",
+      "wrist_only_underperformance"
+    ],
+    "2": [
+      "act",
+      "color_obedience_ceiling",
+      "film",
+      "hilserl",
+      "image_augmentation",
+      "lerobot"
+    ],
+    "3": [
+      "community_variance_risk",
+      "expected_range_70_90",
+      "smolvla",
+      "smolvla_paper",
+      "vla_architecture"
+    ],
+    "4": [
+      "eval1",
+      "eval2",
+      "so101",
+      "wrist_camera"
+    ],
+    "5": [
+      "bowl_position",
+      "projet3_eval2_dataset",
+      "single_task_metadata",
+      "task_string"
+    ],
+    "6": [
+      "action_head",
+      "cross_attention",
+      "siglip",
+      "vision_encoder"
+    ],
+    "7": [
+      "blackwell_sm120",
+      "torch_pin"
+    ],
+    "8": [
+      "proprio_mlp",
+      "proprioception"
+    ],
+    "9": [
+      "smollm",
+      "text_encoder"
+    ]
+  },
+  "cohesion": {
+    "0": 0.4,
+    "1": 0.2,
+    "2": 0.4,
+    "3": 0.5,
+    "4": 0.5,
+    "5": 0.5,
+    "6": 0.5,
+    "7": 1.0,
+    "8": 1.0,
+    "9": 1.0
+  },
+  "gods": [
+    {
+      "id": "smolvla",
+      "label": "SmolVLA",
+      "degree": 19
+    },
+    {
+      "id": "act",
+      "label": "ACT",
+      "degree": 9
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_main",
+      "label": "main()",
+      "degree": 7
+    },
+    {
+      "id": "projet3_eval2_dataset",
+      "label": "101-episode Eval 2 dataset (projet3-eval2-v1-tom-hugo)",
+      "degree": 6
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_add_box",
+      "label": "add_box()",
+      "degree": 5
+    },
+    {
+      "id": "cross_attention",
+      "label": "Cross-Attention Transformer",
+      "degree": 5
+    },
+    {
+      "id": "eval2",
+      "label": "Eval 2 (two-cube task)",
+      "degree": 5
+    },
+    {
+      "id": "task_string",
+      "label": "Natural-language task string",
+      "degree": 5
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_add_arrow",
+      "label": "add_arrow()",
+      "degree": 4
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_fig_smolvla_arch",
+      "label": "fig_smolvla_arch()",
+      "degree": 4
+    }
+  ],
+  "surprises": [
+    {
+      "source": "ACT",
+      "target": "Natural-language task string",
+      "source_files": [
+        "notes/visualizations/smolvla_walkthrough.html",
+        "notes/visualizations/smolvla_walkthrough.html"
+      ],
+      "confidence": "INFERRED",
+      "relation": "conceptually_related_to",
+      "note": "Bridges community 2 \u2192 community 5"
+    },
+    {
+      "source": "SmolVLA",
+      "target": "ACT",
+      "source_files": [
+        "notes/visualizations/smolvla_walkthrough.html",
+        "notes/visualizations/smolvla_walkthrough.html"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "semantically_similar_to",
+      "note": "Bridges community 3 \u2192 community 2"
+    },
+    {
+      "source": "SmolVLA",
+      "target": "Vision Encoder (SigLIP-style)",
+      "source_files": [
+        "notes/visualizations/smolvla_walkthrough.html",
+        "notes/visualizations/smolvla_walkthrough.html"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "references",
+      "note": "Bridges community 3 \u2192 community 6"
+    },
+    {
+      "source": "SmolVLA",
+      "target": "Proprio MLP",
+      "source_files": [
+        "notes/visualizations/smolvla_walkthrough.html",
+        "notes/visualizations/smolvla_walkthrough.html"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "references",
+      "note": "Bridges community 3 \u2192 community 8"
+    },
+    {
+      "source": "SmolVLA",
+      "target": "Text Encoder",
+      "source_files": [
+        "notes/visualizations/smolvla_walkthrough.html",
+        "notes/visualizations/smolvla_walkthrough.html"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "references",
+      "note": "Bridges community 3 \u2192 community 9"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `SmolVLA` connect `Community 3` to `Community 1`, `Community 2`, `Community 4`, `Community 5`, `Community 6`, `Community 8`, `Community 9`?",
+      "why": "High betweenness centrality (0.368) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `101-episode Eval 2 dataset (projet3-eval2-v1-tom-hugo)` connect `Community 5` to `Community 1`, `Community 2`, `Community 3`, `Community 4`?",
+      "why": "High betweenness centrality (0.100) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `ACT` connect `Community 2` to `Community 8`, `Community 3`, `Community 5`, `Community 6`?",
+      "why": "High betweenness centrality (0.095) - this node is a cross-community bridge."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `Rounded box with centered text.`, `SigLIP`, `SmolLM-base` to the rest of the system?",
+      "why": "13 weakly-connected nodes found - possible documentation gaps or missing edges."
+    }
+  ]
+}

@@ -83,3 +83,80 @@ RESUME=true \
   SINGLE_TASK="Pick <TARGET_COLOR> block and place in bowl at (-15.5,29.5) cm" \
   PUSH_TO_HUB=true \
     bash deploy/infer.sh
+
+
+cd /home/tommaso/Desktop/robot-learning-project3 &&
+  /home/tommaso/isaac/isaac_so_arm101/.venv/bin/python -m sim.tommaso_eval2.scripts.view_scene
+  --num_envs 1
+
+CAMERA_INDEX=0 \ FOLLOWER_PORT=/dev/tty.usbmodem<correct_one> \
+    LEADER_PORT=/dev/tty.usbmodem<the_other> \
+    NUM_EPISODES=1 EPISODE_TIME_S=5 \
+    POLICY_PATH=osammotg1/projet3-smolvla-eval2-v1-step38k \
+    bash deploy/infer_smolvla.sh
+
+
+
+### Eval 2 SmolVLA inference (final 50k checkpoint)
+
+  # On the robot PC:
+  cd "/Users/admin/Documents/ETH/M4/Robot Learning /Project S101/robot-learning-project3"
+  git pull --ff-only origin tom-main
+
+  # One-time fresh-Mac dep — SmolVLM's processor uses num2words to spell numerics
+  # and lerobot 0.5.2 doesn't pull it in transitively. Skip if already installed.
+  pip install num2words
+
+  # Optional spot-test before plugging the arm in (catches a broken push).
+  # NOTE: the naive `policy.select_action(raw_batch)` fails with
+  # `KeyError: observation.language.tokens` because the policy expects the
+  # preprocessor to have already tokenized `task` and renamed the camera key.
+  # The version below goes through the saved preprocessor with the device
+  # override that lerobot-record applies automatically at run time.
+  python3 - <<'PY'
+  import torch
+  from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+  from lerobot.policies.factory import make_pre_post_processors
+  REPO = "osammotg1/projet3-smolvla-eval2-v1"
+  policy = SmolVLAPolicy.from_pretrained(REPO).eval()
+  preprocessor, _ = make_pre_post_processors(
+      policy_cfg=policy.config,
+      pretrained_path=REPO,
+      preprocessor_overrides={"device_processor": {"device": "mps"}},
+      postprocessor_overrides={"device_processor": {"device": "mps"}},
+  )
+  batch = {
+      "observation.state": torch.zeros(1, 6),
+      "observation.images.wrist": torch.zeros(1, 3, 480, 640),
+      "task": "Pick yellow block and place in bowl at (-15.5,29.5) cm",
+  }
+  with torch.no_grad():
+      action = policy.select_action(preprocessor(batch))
+  print("action.shape:", action.shape, "  finite:", action.isfinite().all().item())
+  PY
+
+  # Then, with arms + camera plugged in (CAMERA_INDEX=0 is correct on this Mac —
+  # verified across teleop and ACT inference; not 1 like CLAUDE.md's Windows note):
+  bash deploy/infer_smolvla.sh
+  # → interactive picker asks for target cube color
+  # → POLICY_PATH defaults to osammotg1/projet3-smolvla-eval2-v1 (final 50k checkpoint)
+
+  # First short rollout — SmolVLA on MPS is ~5s/forward, so a 5s episode only
+  # produces one inference; bump to 30s so chunked motion actually plays out:
+  NUM_EPISODES=1 EPISODE_TIME_S=30 \
+    POLICY_PATH=osammotg1/projet3-smolvla-eval2-v1 \
+    bash deploy/infer_smolvla.sh
+
+  # Full TA-spec 5-rollout eval (push the recorded eval dataset to HF for review):
+  NUM_EPISODES=5 EPISODE_TIME_S=30 PUSH_TO_HUB=true \
+    POLICY_PATH=osammotg1/projet3-smolvla-eval2-v1 \
+    bash deploy/infer_smolvla.sh
+
+  # Run provenance (for the laptop Claude):
+  #   Repo:   osammotg1/projet3-smolvla-eval2-v1
+  #   Steps:  50000  (final loss 0.007, grad_norm 0.13, lr 2.5e-6 — end of cosine decay)
+  #   W&B:    https://wandb.ai/tom-gazzini-ethrc/projet3-smolvla/runs/1sxlvpgv
+  #   Train rename: --rename_map='{"observation.images.wrist":"observation.images.camera1"}'
+  #     infer_smolvla.sh routes the wrist view into camera1 directly via robot config,
+  #     so no rename is needed at deploy time (kept in the script as a no-op safety net).
+  #   Sanity-comparison checkpoint also on HF: osammotg1/projet3-smolvla-eval2-v1-step38k

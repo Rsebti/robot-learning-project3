@@ -1,0 +1,364 @@
+{
+  "nodes": [
+    {
+      "id": "generate_smolvla_walkthrough_py",
+      "label": "generate_smolvla_walkthrough.py",
+      "file_type": "code",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_b64_png",
+      "label": "b64_png()",
+      "file_type": "code",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L40"
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_add_box",
+      "label": "add_box()",
+      "file_type": "code",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L49"
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_add_arrow",
+      "label": "add_arrow()",
+      "file_type": "code",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L64"
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_fig_smolvla_arch",
+      "label": "fig_smolvla_arch()",
+      "file_type": "code",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L74"
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_fig_act_vs_smolvla",
+      "label": "fig_act_vs_smolvla()",
+      "file_type": "code",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L136"
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_fig_two_cube_decision",
+      "label": "fig_two_cube_decision()",
+      "file_type": "code",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L202"
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_fig_performance_numbers",
+      "label": "fig_performance_numbers()",
+      "file_type": "code",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L271"
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_fig_finetune_pipeline",
+      "label": "fig_finetune_pipeline()",
+      "file_type": "code",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L320"
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_main",
+      "label": "main()",
+      "file_type": "code",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L622"
+    },
+    {
+      "id": "visualizations_generate_smolvla_walkthrough_rationale_50",
+      "label": "Rounded box with centered text.",
+      "file_type": "rationale",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L50"
+    }
+  ],
+  "edges": [
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "base64",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "io",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L15",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "textwrap",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L16",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "pathlib",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L17",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "matplotlib",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L19",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "matplotlib_patches",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L22",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "matplotlib_pyplot",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L23",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "numpy",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L24",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "matplotlib_patches",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L25",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "visualizations_generate_smolvla_walkthrough_b64_png",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L40",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "visualizations_generate_smolvla_walkthrough_add_box",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L49",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "visualizations_generate_smolvla_walkthrough_add_arrow",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L64",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "visualizations_generate_smolvla_walkthrough_fig_smolvla_arch",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L74",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "visualizations_generate_smolvla_walkthrough_fig_act_vs_smolvla",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L136",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "visualizations_generate_smolvla_walkthrough_fig_two_cube_decision",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L202",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "visualizations_generate_smolvla_walkthrough_fig_performance_numbers",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L271",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "visualizations_generate_smolvla_walkthrough_fig_finetune_pipeline",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L320",
+      "weight": 1.0
+    },
+    {
+      "source": "generate_smolvla_walkthrough_py",
+      "target": "visualizations_generate_smolvla_walkthrough_main",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L622",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_fig_smolvla_arch",
+      "target": "visualizations_generate_smolvla_walkthrough_add_box",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L85",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_fig_smolvla_arch",
+      "target": "visualizations_generate_smolvla_walkthrough_add_arrow",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L103",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_fig_act_vs_smolvla",
+      "target": "visualizations_generate_smolvla_walkthrough_add_box",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L148",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_fig_act_vs_smolvla",
+      "target": "visualizations_generate_smolvla_walkthrough_add_arrow",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L157",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_fig_finetune_pipeline",
+      "target": "visualizations_generate_smolvla_walkthrough_add_box",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L339",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_fig_finetune_pipeline",
+      "target": "visualizations_generate_smolvla_walkthrough_add_arrow",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L345",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_main",
+      "target": "visualizations_generate_smolvla_walkthrough_fig_smolvla_arch",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L627",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_main",
+      "target": "visualizations_generate_smolvla_walkthrough_fig_act_vs_smolvla",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L628",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_main",
+      "target": "visualizations_generate_smolvla_walkthrough_fig_two_cube_decision",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L629",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_main",
+      "target": "visualizations_generate_smolvla_walkthrough_fig_performance_numbers",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L630",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_main",
+      "target": "visualizations_generate_smolvla_walkthrough_fig_finetune_pipeline",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L631",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_main",
+      "target": "visualizations_generate_smolvla_walkthrough_b64_png",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L633",
+      "weight": 1.0
+    },
+    {
+      "source": "visualizations_generate_smolvla_walkthrough_rationale_50",
+      "target": "visualizations_generate_smolvla_walkthrough_add_box",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "generate_smolvla_walkthrough.py",
+      "source_location": "L50",
+      "weight": 1.0
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

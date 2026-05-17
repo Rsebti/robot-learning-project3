@@ -566,3 +566,15 @@ paper, the LeRobot ACT and HIL-SERL docs, the SmolVLA paper Table 3, and
 Sherry Chen's `so101_bench` blog this week. Decide by end of week 2 whether
 anyone on the team will own Isaac Lab; if not, route Tasks 2 and 3 entirely
 through real-hardware HIL-SERL on top of ACT primitives.
+
+lerobot-find-joint-limits \
+  --robot.type=so101_follower \
+  --robot.port=/dev/tty.usbmodem5B141129871 \
+  --robot.id=so101_follower \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/tty.usbmodem5B141128171 \
+  --teleop.id=so101_leader
+
+NUM_EPISODES=5 \
+REPO_ID=osammotg1/projet3-hilserl-yellow-v1-smoke \
+bash teleop/record_hilserl_demos.sh

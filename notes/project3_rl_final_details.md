@@ -114,3 +114,5 @@ Awarded under one of two criteria:
 - **Bowl positions are randomized per rollout (Eval 1/2) but fixed within Eval 3 rollouts** — design the policy interface accordingly (xyz goal as input, not hardcoded).
 - **Make target locations runtime-configurable** (config file or CLI arg) — required by the spec.
 - **Wrist cam is RGB only** — any depth/grayscale must be derived in software.
+
+
