@@ -1,0 +1,1 @@
+{"randomize_lighting": false, "arm_stiffness_range": [950, 1050], "arm_damping_range": [95, 105], "action_delay_steps_range": [1, 1], "lag_alpha_range": [0.62, 0.68], "gripper_stiffness_range": [900, 1100], "gripper_damping_range": [90, 110]}
