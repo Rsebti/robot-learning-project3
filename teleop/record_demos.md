@@ -2,6 +2,7 @@
 
 ## Prerequisites
 - LeRobot installed
+- Follower calibrated → `deploy/calibration/so101_follower.json` (see `deploy/calibration/README.md`)
 - HF token logged in (`hf auth login`)
 - SO-101 leader + follower both connected via USB
 - Ports identified on the laptop (via `lerobot-find-port`):

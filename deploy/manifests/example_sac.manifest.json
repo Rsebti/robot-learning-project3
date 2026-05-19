@@ -1,0 +1,9 @@
+{
+  "backend": "sac",
+  "goal_color": 3,
+  "bowl_xyz": [0.16, 0.32, 0.0],
+  "home_pose": "eval1_sac_legacy",
+  "control_hz": 30,
+  "camera_key": "base_camera",
+  "notes": "Copy to eval1_ckpt.manifest.json beside eval1_ckpt.pt when handing off."
+}

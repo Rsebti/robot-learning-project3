@@ -1,5 +1,9 @@
 # infer_eval2.py - quick reference
 
+Uses the same LeRobot ACT deploy stack as `infer_eval1_act_nocube.py`
+(shared helpers in `act_infer_common.py`: 8D env_state, DSHOW camera patch,
+joint-position actions @ 30 Hz).
+
 Goal-conditioned deploy script for Eval-2 / Eval-3. Wraps the lerobot
 Robot + Policy Python APIs and injects `observation.environment_state`
 per frame, since `lerobot-record` cannot do that on its own.

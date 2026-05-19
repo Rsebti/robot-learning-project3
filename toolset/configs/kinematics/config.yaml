@@ -1,0 +1,79 @@
+# SO-101 kinematics & control configuration.
+#
+# Frame conventions:
+#   - base_link is the URDF base. +x_urdf = forward, +y_urdf = left, +z_urdf = up.
+#   - The "user frame" used in deploy scripts is (x_user, y_user, z_user) =
+#     (-y_urdf, +x_urdf, +z_urdf), i.e. right+, forward+, up+. The mapping
+#     is applied at the deploy boundary, not inside FK.
+#   - All distances in meters, angles in degrees (config) or radians (code).
+
+urdf_path: deploy/so101_new_calib.urdf
+
+# --- Gripper tip offset --------------------------------------------------
+# Vector from gripper_frame_link origin to the centerpoint of the CLOSED
+# gripper jaws, expressed in the gripper_frame_link frame. Must be measured
+# on the physical robot once - see calibration_scripts/measure_gripper_tip.py.
+#
+# Procedure I used:
+#   1. Move arm so wrist points straight down (use the home pose).
+#   2. Close the gripper fully.
+#   3. Run FK with current motor angles to get gripper_frame xyz in base.
+#   4. Touch a known-height object with the tip and read its base-frame z.
+#   5. The tip offset along gripper_frame's local axis is (tip_z_in_base
+#      - frame_z_in_base) projected back through the frame rotation.
+#
+# TODO: replace these placeholders by running measure_gripper_tip.py.
+gripper_tip_offset_m:
+  x: 0.000
+  y: 0.000
+  z: 0.000
+
+# --- Joint limits (radians, URDF frame) ----------------------------------
+# Pulled from so101_new_calib.urdf and validated against the box2ai-robotics
+# control_qlimit. Use these to clip IK solutions and reject unreachable
+# requests up front.
+joint_limits_rad:
+  shoulder_pan:  [-1.91986,  1.91986]
+  shoulder_lift: [-1.74533,  1.74533]
+  elbow_flex:    [-1.69000,  1.69000]
+  wrist_flex:    [-1.65806,  1.65806]
+  wrist_roll:    [-2.74385,  2.84121]
+  gripper:       [-0.17453,  1.74533]
+
+# --- Workspace polygon (meters, base_link / URDF frame) ------------------
+# Empirically determined safe operating envelope. ANY ik target outside
+# this polygon is rejected before invoking the solver. Tighten as needed.
+# `max_reach` is the L2 norm from base_link origin in the xy plane.
+workspace:
+  x_range_m: [-0.05,  0.45]    # URDF x = forward; was 0.40 — 15cm move from grasp was clipping at 0.415
+  y_range_m: [-0.30,  0.30]    # URDF y = left
+  z_range_m: [-0.05,  0.35]    # URDF z=0 is ~2 cm ABOVE the table; widen to allow on-table targets.
+  max_reach_xy_m: 0.46
+
+# --- Table & cube physical constants -------------------------------------
+table:
+  z_m: 0.01              # base_link frame height of the table surface
+cube:
+  side_m: 0.025          # cube edge length
+  half_height_m: 0.0125  # centroid above table = side/2
+
+# --- IK solver tuning ----------------------------------------------------
+ik:
+  damping: 0.01          # damped least-squares damping factor
+  max_iters: 200         # solver iterations
+  pos_tol_m: 0.002       # 2 mm convergence
+  rot_tol_rad: 0.05      # ~3 deg orientation tolerance (only if orient locked)
+  step_clip_rad: 0.20    # max joint step per iter (rad)
+
+# --- Path executor defaults ----------------------------------------------
+path:
+  default_speed: normal
+  speeds:
+    slow:   { fps: 10, max_delta_deg_per_step: 1.0 }
+    fluid:  { fps: 40, max_delta_deg_per_step: 1.25 }  # high smoothness, still fairly quick
+    smooth: { fps: 30, max_delta_deg_per_step: 2.0 }   # ik_relative default
+    normal: { fps: 30, max_delta_deg_per_step: 2.5 }
+    fast:   { fps: 30, max_delta_deg_per_step: 6.0 }
+    max:    { fps: 40, max_delta_deg_per_step: 10.0 }
+  interpolation: joint     # "joint" or "cartesian"
+  cartesian_segment_m: 0.005  # 5 mm cartesian steps when interpolation=cartesian

@@ -259,3 +259,8 @@ play_logs/
 # Isaac Sim / Omniverse runtime cache
 *.dmp
 .kit_logs/
+
+# Deploy-time artifacts (session captures, CV scout frames)
+deploy/_snaps/
+deploy/_scout_frame.png
+deploy/_camsnap/

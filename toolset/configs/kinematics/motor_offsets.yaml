@@ -1,0 +1,12 @@
+offsets_deg:
+  elbow_flex: 7.142858678091628
+  shoulder_lift: -0.3736279088608683
+  shoulder_pan: -0.4835164835164835
+  wrist_flex: 1.5824175824175823
+  wrist_roll: -0.3076923076923077
+signs:
+  elbow_flex: 1
+  shoulder_lift: 1
+  shoulder_pan: 1
+  wrist_flex: 1
+  wrist_roll: 1

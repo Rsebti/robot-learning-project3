@@ -1,0 +1,24 @@
+# HSV ranges for cube color segmentation. OpenCV convention:
+#   H in [0, 179], S in [0, 255], V in [0, 255].
+# Each color may have multiple ranges (e.g. red wraps around H=0 and H=180).
+# These defaults were tuned against the eval-2 demos; if lighting changes
+# noticeably, retune via toolset/extract_color_palette.py.
+
+yellow:
+  - [[22, 100, 100], [35, 255, 255]]
+
+orange:
+  - [[4, 120, 80], [22, 255, 255]]
+
+red:
+  - [[0, 120, 60], [4, 255, 255]]
+  - [[172, 120, 60], [180, 255, 255]]
+
+blue:
+  - [[100, 120, 60], [130, 255, 255]]
+
+green:
+  - [[40, 80, 60], [85, 255, 255]]
+
+violet:
+  - [[130, 80, 60], [170, 255, 255]]

@@ -1,0 +1,55 @@
+# Example waypoint sequence for execute_path.py.
+# Frames: "user" means (right+, forward+, up+); "urdf" means raw URDF base frame.
+# mode (optional): "position" or "position_vertical". When omitted, the
+# executor's --mode is used. With only 5 DoF the SO-101 can't always satisfy
+# strict vertical-down everywhere in the workspace - keep vertical for the
+# moments that matter (grasp + release) and use position for transits.
+#
+# Typical pick-and-place: hover above cube, descend, close, raise, hover over
+# bowl, descend, open, raise.
+#
+# Run dry:
+#   python -m toolset.kinematics.execute_path \
+#       --waypoints_yaml toolset/configs/kinematics/example_pick_and_place.yaml --dry_run
+
+waypoints:
+  - xyz: [0.18, 0.25, 0.10]      # hover above cube
+    frame: user
+    mode: position_vertical
+    open_gripper: true
+    settle_s: 0.2
+
+  - xyz: [0.18, 0.25, 0.03]      # descend to grasp height
+    frame: user
+    mode: position_vertical
+    settle_s: 0.2
+
+  - xyz: [0.18, 0.25, 0.03]      # close gripper, hold position
+    frame: user
+    mode: position_vertical
+    close_gripper: true
+    hold_s: 0.5
+
+  - xyz: [0.18, 0.25, 0.15]      # lift
+    frame: user
+    mode: position_vertical
+    settle_s: 0.2
+
+  - xyz: [0.16, 0.32, 0.15]      # transit over bowl (eval-1 bowl pos)
+    frame: user
+    mode: position
+
+  - xyz: [0.16, 0.32, 0.10]      # descend over bowl
+    frame: user
+    mode: position_vertical
+    settle_s: 0.2
+
+  - xyz: [0.16, 0.32, 0.10]      # release
+    frame: user
+    mode: position_vertical
+    open_gripper: true
+    hold_s: 0.3
+
+  - xyz: [0.16, 0.32, 0.20]      # retract up
+    frame: user
+    mode: position
