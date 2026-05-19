@@ -12,7 +12,7 @@ set -euo pipefail
 REPO_ID="${REPO_ID:-osammotg1/eval1-eth-hg-smoketest}"
 EPISODES_PER_COLOR="${EPISODES_PER_COLOR:-10}"
 EPISODE_TIME_S="${EPISODE_TIME_S:-55}"
-RESET_TIME_S="${RESET_TIME_S:-0}"
+RESET_TIME_S="${RESET_TIME_S:-8}"
 FPS="${FPS:-30}"
 
 # Local data root for the dataset. Required because lerobot's resume() refuses

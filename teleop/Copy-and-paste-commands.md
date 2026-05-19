@@ -167,4 +167,109 @@ CAMERA_INDEX=0 \ FOLLOWER_PORT=/dev/tty.usbmodem<correct_one> \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem5B141129871 \
     --robot.id=so101_follower
-   
+
+
+----
+
+## Friend handoff — run Eval 1 inference on a fresh Mac
+
+You do **not** need to record anything — dataset is already on HF and the
+policy is trained. Three steps to deploy.
+
+### 1. Pull the repo
+
+  git clone git@github.com:Rsebti/robot-learning-project3.git
+  cd robot-learning-project3
+  git checkout tom-act
+  # or, if already cloned:  git pull --ff-only origin tom-act
+
+### 2. Install the SO-101 calibration files
+
+The exact JSONs Tommaso used to record the dataset are committed under
+`teleop/calibration/`. Copy them into lerobot's cache (mirror the paths):
+
+  mkdir -p ~/.cache/huggingface/lerobot/calibration/robots/so_follower
+  mkdir -p ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader
+  cp teleop/calibration/robots/so_follower/so101_follower.json \
+     ~/.cache/huggingface/lerobot/calibration/robots/so_follower/
+  cp teleop/calibration/teleoperators/so_leader/so101_leader.json \
+     ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/
+
+  # verify
+  ls ~/.cache/huggingface/lerobot/calibration/robots/so_follower/
+  ls ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/
+
+⚠ Do **not** run `lerobot-calibrate` — it would overwrite these with new
+homing offsets and silently break the trained policy.
+
+### 3. Run inference on the real robot
+
+Plug follower + leader (leader is only used to back-drive the arm during
+the reset window between rollouts) + the wrist camera. Then:
+
+  hf auth whoami      # must print osammotg1; if not: hf auth login
+
+  FOLLOWER_PORT=/dev/tty.usbmodem<YOUR_FOLLOWER> \
+  LEADER_PORT=/dev/tty.usbmodem<YOUR_LEADER> \
+  CAMERA_INDEX=0 \
+  POLICY_PATH=osammotg1/projet3-act-eval1-v1-dark-shadow \
+  POLICY_DEVICE=mps \
+  NUM_EPISODES=5 \
+  EPISODE_TIME_S=20 \
+  RESET_TIME_S=10 \
+  PUSH_TO_HUB=true \
+    bash deploy/infer_eval1.sh
+
+Tip: ask Tommaso for the latest `POLICY_PATH` if a newer checkpoint
+(trained on `osammotg1/eval1-eth-hg-smoketest-2`) is out by the time you
+run this.
+
+To find your USB ports + camera index on a fresh Mac:
+
+  lerobot-find-port
+  lerobot-find-cameras opencv
+
+The eval rollouts get auto-pushed to a `eval_*` dataset on HF — the URL
+prints at the end of the run.
+
+----
+
+### Claude Code prompt for the friend (paste at session start on the lab Mac)
+
+```text
+You are helping me deploy a trained ACT policy on the SO-101 follower
+for Eval 1 of the ETH Robot Learning project. The repo is checked out
+at the current working directory, on branch `tom-act`.
+
+Two calibration JSON files are committed in the repo:
+  teleop/calibration/robots/so_follower/so101_follower.json
+  teleop/calibration/teleoperators/so_leader/so101_leader.json
+
+LeRobot expects these under ~/.cache/huggingface/lerobot/calibration/
+with the same relative paths.
+
+Whenever calibration is referenced — e.g. lerobot-record, lerobot-replay,
+or deploy/infer_eval1.sh reports "calibration not found", or before the
+first use of this SO-101 kit on this machine — DO NOT run
+`lerobot-calibrate`. Instead copy the committed JSONs into place:
+
+  mkdir -p ~/.cache/huggingface/lerobot/calibration/robots/so_follower
+  mkdir -p ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader
+  cp teleop/calibration/robots/so_follower/so101_follower.json \
+     ~/.cache/huggingface/lerobot/calibration/robots/so_follower/
+  cp teleop/calibration/teleoperators/so_leader/so101_leader.json \
+     ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/
+
+These are the exact calibration values Tommaso used to record the
+osammotg1/eval1-eth-hg-smoketest-2 dataset, so the trained policy
+expects this calibrated frame. Re-running lerobot-calibrate would
+shift the homing offsets and silently break the policy.
+
+`lerobot-find-port` and `lerobot-find-cameras opencv` are fine to run
+when needed to discover USB paths and camera index — but never
+overwrite the calibration JSONs.
+
+To deploy: run `bash deploy/infer_eval1.sh` with the env-vars from
+the "Friend handoff — run Eval 1 inference on a fresh Mac" section
+of teleop/Copy-and-paste-commands.md.
+```
