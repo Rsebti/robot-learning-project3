@@ -160,3 +160,11 @@ CAMERA_INDEX=0 \ FOLLOWER_PORT=/dev/tty.usbmodem<correct_one> \
   #     infer_smolvla.sh routes the wrist view into camera1 directly via robot config,
   #     so no rename is needed at deploy time (kept in the script as a no-op safety net).
   #   Sanity-comparison checkpoint also on HF: osammotg1/projet3-smolvla-eval2-v1-step38k
+
+
+  cd "/Users/admin/Documents/ETH/M4/Robot Learning /Project S101"
+  .venv/bin/lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem5B141129871 \
+    --robot.id=so101_follower
+   

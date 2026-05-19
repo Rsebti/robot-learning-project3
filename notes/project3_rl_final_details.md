@@ -116,3 +116,8 @@ Awarded under one of two criteria:
 - **Wrist cam is RGB only** — any depth/grayscale must be derived in software.
 
 
+cd ~/Desktop/eval-ggand0/hil-serl-so101 && uv run python -m lerobot.scripts.rl.gym_manipulator --config_path "/Users/admin/Documents/ETH/M4/Robot Learning/Project S101/robot-learning-project3/sim/hilserl/configs/ggand0/yellow_v1_record.json"
+
+cd ~/Desktop/eval-ggand0/hil-serl-so101 && uv run python -m lerobot.scripts.rl.gym_manipulator --config_path "/Users/admin/Documents/ETH/M4/Robot Learning/Project S101/robot-learning-project3/sim/hilserl/configs/ggand0/yellow_v1_record.json"
+
+https://github.com/addyosmani/agent-skills

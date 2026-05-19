@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-REPO_ID="${REPO_ID:-osammotg1/projet3-eval1-v2-tom-hugo}"
+REPO_ID="${REPO_ID:-osammotg1/eval1-eth-hg-smoketest}"
 EPISODES_PER_COLOR="${EPISODES_PER_COLOR:-10}"
 EPISODE_TIME_S="${EPISODE_TIME_S:-55}"
 RESET_TIME_S="${RESET_TIME_S:-0}"
@@ -131,7 +131,7 @@ for i in "${!COLORS[@]}"; do
       --dataset.episode_time_s="${EPISODE_TIME_S}" \
       --dataset.reset_time_s="${RESET_TIME_S}" \
       --dataset.single_task="Pick ${color} block and place in bowl" \
-      --dataset.private=true \
+      --dataset.private=false \
       --dataset.push_to_hub=true \
       --dataset.streaming_encoding="${STREAMING_ENCODING}" \
       --dataset.encoder_threads="${ENCODER_THREADS}" \
