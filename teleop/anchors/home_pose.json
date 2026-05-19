@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "follower": {
+    "joints_deg": {
+      "shoulder_pan": -3.5165,
+      "shoulder_lift": -94.989,
+      "elbow_flex": 38.3297,
+      "wrist_flex": 101.4945,
+      "wrist_roll": -1.0989,
+      "gripper": 12.4914
+    },
+    "stats": {
+      "shoulder_pan": {
+        "mean": -3.4951,
+        "median": -3.5165,
+        "mad": 0.0,
+        "range": 0.4396,
+        "n": 300
+      },
+      "shoulder_lift": {
+        "mean": -95.0142,
+        "median": -94.989,
+        "mad": 0.0,
+        "range": 0.1758,
+        "n": 300
+      },
+      "elbow_flex": {
+        "mean": 38.376,
+        "median": 38.3297,
+        "mad": 0.0,
+        "range": 0.2637,
+        "n": 300
+      },
+      "wrist_flex": {
+        "mean": 101.4945,
+        "median": 101.4945,
+        "mad": 0.0,
+        "range": 0.0,
+        "n": 300
+      },
+      "wrist_roll": {
+        "mean": -1.1089,
+        "median": -1.0989,
+        "mad": 0.0,
+        "range": 0.3516,
+        "n": 300
+      },
+      "gripper": {
+        "mean": 12.3958,
+        "median": 12.4914,
+        "mad": 0.0,
+        "range": 0.4804,
+        "n": 300
+      }
+    },
+    "captured_at": "2026-05-19T17:52:09+00:00",
+    "calibration_sha256": "4e8062755c547ae082d02ffe179f40e8d1fbfa01899710e833fad3136d2c6d32",
+    "lerobot_version": "0.5.1",
+    "port_at_capture": null,
+    "sample": {
+      "n": 300,
+      "hz": 30.0,
+      "duration_s": 10.0
+    }
+  },
+  "leader": null
+}

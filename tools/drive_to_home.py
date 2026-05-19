@@ -12,20 +12,10 @@ Override any joint from the CLI, e.g.:
 """
 import argparse
 import sys
-import time
+from pathlib import Path
 
-from lerobot.robots.so_follower.config_so_follower import SO101FollowerConfig
-from lerobot.robots.so_follower.so_follower import SOFollower
-
-
-JOINTS = [
-    "shoulder_pan",
-    "shoulder_lift",
-    "elbow_flex",
-    "wrist_flex",
-    "wrist_roll",
-    "gripper",
-]
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "teleop"))
+from _arm_lib import JOINTS, connect_arm, drive_to  # noqa: E402
 
 # Home pose of osammotg1/projet3-eval1-bowl1-v1 (degrees).
 # Source: tools/inspect_dataset_state.py over 39 episodes.
@@ -41,69 +31,48 @@ DEFAULT_TARGET = {
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", default="/dev/tty.usbmodem5B141129871")
+    parser.add_argument("--port", default=None,
+                        help="Override DEFAULT_FOLLOWER_PORT from teleop/_arm_lib.py")
     parser.add_argument("--id", default="so101_follower")
     parser.add_argument(
-        "--duration-s",
-        type=float,
-        default=2.5,
-        help="Total time to interpolate from current pose to target.",
+        "--duration-s", type=float, default=2.5,
+        help="Minimum interpolation duration. Actual duration may be longer "
+             "if max joint delta requires it at the 25°/s velocity cap.",
     )
-    parser.add_argument("--hz", type=float, default=30.0, help="Waypoint send rate.")
+    parser.add_argument("--hz", type=float, default=30.0)
     parser.add_argument(
-        "--hold-torque",
-        action="store_true",
-        help="Leave torque ON after reaching the pose (default: torque OFF so you can manually verify).",
+        "--hold-torque", action="store_true",
+        help="Leave torque ON after reaching the pose. "
+             "Default: torque OFF on disconnect so you can move the arm by hand.",
     )
     for j, v in DEFAULT_TARGET.items():
         parser.add_argument(f"--{j}", type=float, default=v)
     args = parser.parse_args()
 
-    target = {f"{j}.pos": getattr(args, j) for j in JOINTS}
+    target = {j: getattr(args, j) for j in JOINTS}
 
-    cfg = SO101FollowerConfig(
-        port=args.port,
-        id=args.id,
-        use_degrees=True,
-        disable_torque_on_disconnect=not args.hold_torque,
-    )
-    robot = SOFollower(cfg)
-    print(f"[drive-to-home] connecting to {args.port} ...")
-    robot.connect()
-
+    print(f"[drive-to-home] connecting to follower ...")
+    arm = connect_arm("follower", port=args.port, robot_id=args.id,
+                      hold_torque_on_exit=args.hold_torque)
     try:
-        obs = robot.get_observation()
-        start = {f"{j}.pos": float(obs[f"{j}.pos"]) for j in JOINTS}
-        print(f"[drive-to-home] start :  " + "  ".join(f"{j}={start[f'{j}.pos']:+7.2f}" for j in JOINTS))
-        print(f"[drive-to-home] target:  " + "  ".join(f"{j}={target[f'{j}.pos']:+7.2f}" for j in JOINTS))
-
-        max_delta = max(abs(target[f"{j}.pos"] - start[f"{j}.pos"]) for j in JOINTS)
-        print(f"[drive-to-home] max joint delta: {max_delta:.1f} deg over {args.duration_s}s "
-              f"({max_delta / args.duration_s:.1f} deg/s)")
-
-        n_steps = max(2, int(args.duration_s * args.hz))
-        dt = 1.0 / args.hz
-        for i in range(1, n_steps + 1):
-            alpha = i / n_steps
-            waypoint = {
-                k: start[k] + alpha * (target[k] - start[k])
-                for k in target
-            }
-            robot.send_action(waypoint)
-            time.sleep(dt)
-
-        # Let the final waypoint settle before reading the residual.
-        time.sleep(0.6)
-        final = robot.get_observation()
-        residual = {j: final[f"{j}.pos"] - target[f"{j}.pos"] for j in JOINTS}
-        print(f"[drive-to-home] final :  " + "  ".join(f"{j}={final[f'{j}.pos']:+7.2f}" for j in JOINTS))
-        print(f"[drive-to-home] error :  " + "  ".join(f"{j}={residual[j]:+7.2f}" for j in JOINTS))
+        result = drive_to(arm, target, hz=args.hz, min_duration_s=args.duration_s)
+        print(f"[drive-to-home] start :  "
+              + "  ".join(f"{j}={result['start'][j]:+7.2f}" for j in JOINTS))
+        print(f"[drive-to-home] target:  "
+              + "  ".join(f"{j}={result['target'][j]:+7.2f}" for j in JOINTS))
+        print(f"[drive-to-home] final :  "
+              + "  ".join(f"{j}={result['achieved'][j]:+7.2f}" for j in JOINTS))
+        print(f"[drive-to-home] error :  "
+              + "  ".join(f"{j}={result['residual'][j]:+7.2f}" for j in JOINTS))
+        print(f"[drive-to-home] max error: {result['max_error']:.3f}°")
     finally:
         if args.hold_torque:
-            print("[drive-to-home] holding torque ON (--hold-torque). Re-run without that flag to release.")
+            print("[drive-to-home] holding torque ON (--hold-torque). "
+                  "Re-run without that flag to release.")
         else:
-            print("[drive-to-home] disconnecting (torque OFF). Robot is now free to move by hand.")
-        robot.disconnect()
+            print("[drive-to-home] disconnecting (torque OFF). "
+                  "Robot is now free to move by hand.")
+        arm.disconnect()
 
 
 if __name__ == "__main__":

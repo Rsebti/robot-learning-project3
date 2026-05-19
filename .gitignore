@@ -251,3 +251,7 @@ sim/hilserl/assets/so101/urdf/assets/*.stl
 # The MJCF XMLs, .part files, and README are committed; STLs (15 MB) are fetched
 # via the LFS pull procedure in sim/hilserl/assets/so101_mjcf/README.md.
 sim/hilserl/assets/so101_mjcf/assets/*.stl
+
+# Home-pose smoke-test drift log — grows every verify run, per-machine.
+# home_pose.json itself IS tracked (it's the anchor we ship).
+teleop/anchors/_drift_log.jsonl
