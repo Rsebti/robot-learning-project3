@@ -69,6 +69,22 @@ JOINT_UPPER = np.array([1.91986, 1.74533, 1.69, 1.65806, 2.84121, 2.0944])
 # SO101 "start" keyframe; the env seeds rest_qpos AND the controller target here.
 REST_QPOS = np.array([0.0, 0.0, 0.0, np.pi / 2, -np.pi / 2, np.deg2rad(60)], dtype=np.float32)
 
+
+def ramp_gripper_open(agent, arm_target_qpos, *, grip_idx: int = 5, steps: int = 15) -> np.ndarray:
+    """Ramp gripper to sim-open while holding arm at last target so the cube can drop before homing."""
+    tgt = np.asarray(arm_target_qpos, dtype=np.float64).flatten().copy()
+    tgt = np.clip(tgt, JOINT_LOWER, JOINT_UPPER)
+    g0 = float(tgt[grip_idx])
+    g1 = float(JOINT_UPPER[grip_idx])
+    for i in range(1, steps + 1):
+        alpha = i / steps
+        tgt[grip_idx] = g0 * (1.0 - alpha) + g1 * alpha
+        tgt = np.clip(tgt, JOINT_LOWER, JOINT_UPPER)
+        agent.set_target_qpos(torch.from_numpy(tgt.astype(np.float32)))
+        time.sleep(1.0 / CONTROL_HZ)
+    return tgt.astype(np.float32)
+
+
 # ── The two real<->sim mappings (selectable with --mapping) ────────────────
 # CORRECT = the validated mapping (4 ground-truth anchors + step-by-step HF
 #   teleop-demo replay, visually validated 2026-05-18). Fixes the false-grasp:
@@ -400,10 +416,17 @@ def main():
                          action_raw=np.stack(la), policy_rgb=np.stack(lr),
                          joint_names=np.array(JOINT_NAMES))
                 print(f"  -> saved {log_dir / f'ep{ep:03d}.npz'}")
+            # Release / drop: open gripper at full episode length before next REST reset.
+            ramp_gripper_open(agent, target_qpos)
             print(f"Episode done ({args.episode_steps} steps).")
     except KeyboardInterrupt:
-        print("\nQuitting — ramping back to REST.")
+        print("\nQuitting — opening gripper then ramping back to REST.")
     finally:
+        try:
+            q = agent.get_qpos().cpu().numpy().flatten()
+            ramp_gripper_open(agent, q, steps=20)
+        except Exception:
+            pass
         agent.reset(REST_QPOS)
         robot.disconnect()
 

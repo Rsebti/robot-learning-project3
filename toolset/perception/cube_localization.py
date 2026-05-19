@@ -38,6 +38,11 @@ KIN_CONFIG_DIR = PROJECT_ROOT / "toolset" / "configs" / "kinematics"
 LEGACY_CALIB = PROJECT_ROOT / "toolset" / "configs" / "camera_calibration.yaml"
 HSV_CONFIG_PATH = PROJECT_ROOT / "toolset" / "perception" / "hsv_config.yaml"
 
+# Deploy stream size (640x480 matches manual OpenCV color scripts on this robot).
+# Intrinsics in camera_intrinsics.npz are scaled from native calib resolution if needed.
+WRIST_CAM_WIDTH = 640
+WRIST_CAM_HEIGHT = 480
+
 
 # HSV ranges expressed in OpenCV's [0..179, 0..255, 0..255] convention. We
 # load these from hsv_config.yaml at runtime so they can be tuned without
@@ -67,12 +72,71 @@ def _load_hsv() -> dict:
     return DEFAULT_HSV
 
 
+def _intrinsics_source_label() -> str:
+    new = KIN_CONFIG_DIR / "camera_intrinsics.npz"
+    if new.exists():
+        return str(new)
+    if LEGACY_CALIB.exists():
+        return str(LEGACY_CALIB)
+    return "none"
+
+
+def load_intrinsics_image_size() -> tuple[int, int] | None:
+    """Return (width, height) from camera_intrinsics.npz, or None if missing."""
+    new = KIN_CONFIG_DIR / "camera_intrinsics.npz"
+    if not new.exists():
+        return None
+    d = np.load(new)
+    if "image_size" not in d:
+        return None
+    w, h = np.asarray(d["image_size"], dtype=int).reshape(-1)[:2]
+    return int(w), int(h)
+
+
+def log_intrinsics_camera_size_match(tag: str = "cv") -> None:
+    """Log whether npz image_size matches WRIST_CAM_WIDTH/HEIGHT deploy config."""
+    npz_size = load_intrinsics_image_size()
+    cam = (WRIST_CAM_WIDTH, WRIST_CAM_HEIGHT)
+    if npz_size is None:
+        print(f"[{tag}] WARN: no image_size in camera_intrinsics.npz", flush=True)
+    elif npz_size != cam:
+        print(
+            f"[{tag}] intrinsics scaled {npz_size} -> {cam[0]}x{cam[1]} deploy stream",
+            flush=True,
+        )
+    else:
+        print(
+            f"[{tag}] image_size OK: {cam[0]}x{cam[1]} (npz matches camera config)",
+            flush=True,
+        )
+
+
+def _scale_K_to_stream(K: np.ndarray, native_wh: tuple[int, int]) -> np.ndarray:
+    """Scale intrinsics K from calibration resolution to WRIST_CAM_WIDTH/HEIGHT."""
+    nw, nh = native_wh
+    tw, th = WRIST_CAM_WIDTH, WRIST_CAM_HEIGHT
+    if (nw, nh) == (tw, th):
+        return K
+    sx, sy = tw / nw, th / nh
+    Ks = K.copy()
+    Ks[0, 0] *= sx
+    Ks[1, 1] *= sy
+    Ks[0, 2] *= sx
+    Ks[1, 2] *= sy
+    return Ks
+
+
 def _load_intrinsics() -> tuple[np.ndarray, np.ndarray] | None:
     """Try new (chessboard) calibration first, then legacy. Return (K, dist) or None."""
     new = KIN_CONFIG_DIR / "camera_intrinsics.npz"
     if new.exists():
         d = np.load(new)
-        return d["K"], d["dist"]
+        K = np.asarray(d["K"], dtype=float)
+        dist = np.asarray(d["dist"], dtype=float).reshape(-1)
+        native = load_intrinsics_image_size()
+        if native is not None:
+            K = _scale_K_to_stream(K, native)
+        return K, dist
     if LEGACY_CALIB.exists():
         with open(LEGACY_CALIB) as f:
             d = yaml.safe_load(f) or {}
@@ -121,9 +185,11 @@ class CubeLocalizer:
             raise FileNotFoundError(
                 "No camera intrinsics found. Run "
                 "calibration_scripts/calibrate_camera_chessboard.py or "
+                "toolset.calibration_scripts.import_checkerboard_intrinsics, or "
                 "ensure legacy toolset/configs/camera_calibration.yaml exists."
             )
         self.K, self.dist = intr
+        self.intrinsics_source = _intrinsics_source_label()
         T = _load_T_cam_in_wrist()
         if T is None:
             raise FileNotFoundError(
@@ -140,29 +206,16 @@ class CubeLocalizer:
     ) -> tuple[tuple[float, float] | None, np.ndarray | None, float]:
         if color not in self.hsv_ranges:
             raise KeyError(f"Unknown color '{color}'; known: {list(self.hsv_ranges)}")
-        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-        mask_total = np.zeros(hsv.shape[:2], dtype=np.uint8)
-        for lo, hi in self.hsv_ranges[color]:
-            m = cv2.inRange(hsv, np.array(lo, dtype=np.uint8),
-                                np.array(hi, dtype=np.uint8))
-            mask_total = cv2.bitwise_or(mask_total, m)
-        # Morphological cleanup
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        mask_total = cv2.morphologyEx(mask_total, cv2.MORPH_OPEN, kernel, iterations=1)
-        mask_total = cv2.morphologyEx(mask_total, cv2.MORPH_CLOSE, kernel, iterations=2)
-        contours, _ = cv2.findContours(mask_total, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None, mask_total, 0.0
-        largest = max(contours, key=cv2.contourArea)
-        area = float(cv2.contourArea(largest))
-        if area < 60:  # too small / noise
-            return None, mask_total, area
-        M = cv2.moments(largest)
-        if M["m00"] == 0:
-            return None, mask_total, area
-        px = float(M["m10"] / M["m00"])
-        py = float(M["m01"] / M["m00"])
-        return (px, py), mask_total, area
+        from toolset.perception.color_mask import mask_color_blob
+
+        px, mask, area = mask_color_blob(
+            bgr, self.hsv_ranges[color],
+            bright_only=True,
+            max_area_frac=0.02,
+        )
+        if px is None:
+            return None, mask, area
+        return px, mask, area
 
     # ---- pixel + camera pose -> base xyz ------------------------------
     def pixel_to_base(

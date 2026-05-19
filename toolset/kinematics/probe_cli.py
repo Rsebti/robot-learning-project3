@@ -53,12 +53,14 @@ def main():
     from lerobot.robots.utils import make_robot_from_config
     from lerobot.robots.so_follower.config_so_follower import SO101FollowerConfig
     from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+    from toolset.perception.cube_localization import WRIST_CAM_HEIGHT, WRIST_CAM_WIDTH
 
     rconf = SO101FollowerConfig(
         port=args.port,
         id="so101_follower",
         cameras={"wrist": OpenCVCameraConfig(
-            index_or_path=args.camera_index, fps=30, width=640, height=480,
+            index_or_path=args.camera_index, fps=30,
+            width=WRIST_CAM_WIDTH, height=WRIST_CAM_HEIGHT,
         )},
     )
     robot = make_robot_from_config(rconf)

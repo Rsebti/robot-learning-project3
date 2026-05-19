@@ -1,0 +1,42 @@
+source: friend_checkerboard
+native_image_size:
+- 1920
+- 1080
+deploy_image_size:
+- 1920
+- 1080
+mean_reproj_err_px_native: 3.0503
+native:
+  image_size:
+  - 1920
+  - 1080
+  mean_reproj_err_px: 3.0503
+  fx: 678.91
+  fy: 677.98
+  cx: 963.03
+  cy: 563.69
+native_dist:
+- 0.03445741546881645
+- -0.05711470904549814
+- 0.0005838923219725458
+- 0.00038779296341359427
+- 0.011379063813159436
+deploy:
+  K:
+  - - 678.91
+    - 0.0
+    - 963.03
+  - - 0.0
+    - 677.98
+    - 563.69
+  - - 0.0
+    - 0.0
+    - 1.0
+  dist_coeffs:
+  - 0.03445741546881645
+  - -0.05711470904549814
+  - 0.0005838923219725458
+  - 0.00038779296341359427
+  - 0.011379063813159436
+note: T_cam_in_wrist still from legacy camera_calibration.yaml until calibrate_hand_eye.py
+  is run on this camera mount.

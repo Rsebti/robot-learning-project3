@@ -37,7 +37,7 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--policy_path", default="hudela390/projet3-act-eval1-v1-no-cube")
+    parser.add_argument("--policy_path", default="osammotg1/projet3-act-eval1-v1-no-cube")
     add_act_cli_args(parser, default_home_pose="eval1_rest")
     args = parser.parse_args()
 

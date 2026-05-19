@@ -45,7 +45,7 @@ if str(DEPLOY) not in sys.path:
 
 from homes import DEFAULT_HOME_POSE, get_home_deg, list_home_poses  # noqa: E402
 from robot_calibration import make_so101_follower_config  # noqa: E402
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: E402
+from wrist_camera_config import make_wrist_opencv_camera_config  # noqa: E402
 from lerobot.robots.utils import make_robot_from_config  # noqa: E402
 
 from toolset.kinematics.config import KinematicsConfig  # noqa: E402
@@ -305,7 +305,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--port", default="COM3")
-    p.add_argument("--camera_index", type=int, default=1)
+    p.add_argument("--camera_index", type=int, default=0)
     p.add_argument("--sequence", choices=["lift_place"], default=None,
                    help="Built-in waypoint list (see module docstring).")
     p.add_argument("--lift_m", type=float, default=0.10,
@@ -411,8 +411,7 @@ def main():
     elif args.dry_run:
         cfg = make_so101_follower_config(
             args.port,
-            cameras={"base_camera": OpenCVCameraConfig(
-                index_or_path=args.camera_index, fps=30, width=640, height=480)},
+            cameras={"base_camera": make_wrist_opencv_camera_config(args.camera_index)},
             use_degrees=True,
         )
         robot = make_robot_from_config(cfg)
@@ -430,8 +429,7 @@ def main():
     else:
         cfg = make_so101_follower_config(
             args.port,
-            cameras={"base_camera": OpenCVCameraConfig(
-                index_or_path=args.camera_index, fps=30, width=640, height=480)},
+            cameras={"base_camera": make_wrist_opencv_camera_config(args.camera_index)},
             use_degrees=True,
         )
         robot = make_robot_from_config(cfg)
@@ -519,7 +517,7 @@ def main():
                       f"FAILED: reason={res.reason}  pos_err={res.pos_err_m * 1000:.2f} mm")
                 if robot is not None:
                     robot.disconnect()
-                return
+                raise SystemExit(1)
             delta_rad = res.joints_rad - q_init
             tgt_user = urdf_xyz_to_user(tgt_urdf)
             print(f"[ik-rel] WP {i}: offset_user={off_user.tolist()}  "

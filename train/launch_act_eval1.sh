@@ -76,7 +76,7 @@ uv run accelerate launch \
   --policy.type=act \
   --policy.device=cuda \
   --policy.push_to_hub="${PUSH_TO_HUB:-true}" \
-  --policy.repo_id="${POLICY_REPO_ID:-hudela390/projet3-act-eval1-v1-no-cube}" \
+  --policy.repo_id="${POLICY_REPO_ID:-osammotg1/projet3-act-eval1-v1-no-cube}" \
   --policy.dim_model=256 \
   --policy.n_heads=8 \
   --policy.dim_feedforward=1024 \
