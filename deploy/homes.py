@@ -118,8 +118,10 @@ HOMES: dict[str, HomePose] = {
     ),
     # Optional A/B preset: SAC starting at the universal home (will jump).
     "eval1_sac_universal": HomePose(
-        description="A/B test: SAC homed at the universal ACT home. Expected to "
-                    "jump on first step because it doesn't match training rest.",
+        description="SAC policies trained starting from the universal physical home "
+                    "(2026+ friend checkpoints, e1*lat / 1792-dim CNN head). "
+                    "Uses sim-space sac_radians matching that pose. "
+                    "Legacy sim-only trainings: use --home_pose eval1_sac_legacy.",
         degrees=dict(_UNIVERSAL_HOME_DEG),
         sac_radians=_UNIVERSAL_HOME_RAD,
     ),

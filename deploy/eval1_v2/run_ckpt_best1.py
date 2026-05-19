@@ -1,5 +1,6 @@
 """
-DEPRECATED: use `python deploy/run_checkpoint.py --ckpt <path>`.
+DEPRECATED: prefer `python deploy/run_best_ckpt.py --ckpt <path>` or
+`python deploy/run_checkpoint.py --ckpt <path>` (same SAC path; clearer name).
 
 run_ckpt_best1.py - thin pass-through to infer_sac_legacy.main().
 Nothing injected. Pass every flag yourself.

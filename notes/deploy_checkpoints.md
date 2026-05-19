@@ -1,5 +1,11 @@
 # Checkpoint deploy protocol (one launcher)
 
+## Friend's Squint ``*.pt`` (what you used to call ``run_best_ckpt``)
+
+Use **`deploy/run_best_ckpt.py`** or **`deploy/run_checkpoint.py`** — same behavior.
+You do **not** need to run `eval1_v2/infer_sac_legacy.py` by hand; that file is only
+the engine those launchers start for local SAC checkpoints.
+
 ## One command
 
 ```powershell
@@ -7,16 +13,18 @@ conda activate trim
 cd C:\Users\hugod\project3
 
 # Inspect any checkpoint first
-python deploy/run_checkpoint.py --inspect --ckpt C:\Users\hugod\eval1_ckpt.pt
+python deploy/run_best_ckpt.py --inspect --ckpt C:\Users\hugod\e1100lat.pt
 python deploy/run_checkpoint.py --inspect --ckpt hudela390/projet3-act-eval1-v1-no-cube
 
 # Run (auto-routes SAC .pt vs ACT HF/folder)
-python deploy/run_checkpoint.py --name eval1_ckpt --goal_color 3 --bowl_xyz 0.16 0.32 0
+python deploy/run_best_ckpt.py --name ckpt_best_1 --goal_color 0 --bowl_xyz 0.2 0.1 0.0
 python deploy/run_checkpoint.py --ckpt deploy/eval1_v2/ckpt.pt
 python deploy/run_checkpoint.py --ckpt hudela390/projet3-act-eval1-v1-no-cube --target_color yellow --bowl_x 0.16 --bowl_y 0.32
 ```
 
-`run_checkpoint.py` replaces the old thin wrappers (`run_eval1_ckpt`, `run_hugod_ckpt`, `run_ckpt_best1`, `run_act_8d`) — those still work but all boil down to the same infer scripts.
+`run_checkpoint.py` is the unified router; `run_best_ckpt.py` is an alias focused on
+friend-style ``*.pt``. Older thin wrappers (`run_eval1_ckpt`, `run_hugod_ckpt`,
+`run_ckpt_best1`) still work.
 
 ## Where files live
 
@@ -38,11 +46,13 @@ python deploy/run_checkpoint.py --ckpt hudela390/projet3-act-eval1-v1-no-cube --
 | Field | How |
 |-------|-----|
 | `n_state` | 12 = eval1 no colour; 18 = colour; 21 = colour + bowl xyz |
-| `n_conv` / `image_size` | 2 / 16 (original) or 3 / 32 (`ckpt_best_*`) |
-| Camera | Wrist `base_camera` 640×480 → center crop → 128 → CNN input |
+| `n_conv` / policy resolution | 2-conv → 16×16; 3-conv → 32×32 **or** 42×32 (1792-dim head), inferred from weights |
+| Camera | Wrist `base_camera` 640×480 → crop + resize to policy H×W |
 | Actions | Delta joint targets (not absolute ACT positions) |
 
-**Runs:** `deploy/eval1_v2/infer_sac_legacy.py` (handles both CNN variants).
+**You run:** `deploy/run_best_ckpt.py` or `deploy/run_checkpoint.py` → **internally** `deploy/eval1_v2/infer_sac_legacy.py` (do not rely on calling the latter directly unless debugging).
+
+**Homing (SAC, eval1_v2):** default `--home_pose auto` — picks **`eval1_sac_universal`** (newer universal physical rest in sim rad) when checkpoint weights look like the friend’s **1792-dim / rgb_emb=75** head; otherwise **`eval1_sac_legacy`**. Override with an explicit `--home_pose` if needed.
 
 **SAC flags** (pass after `--` or as trailing args):
 

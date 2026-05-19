@@ -11,8 +11,10 @@ Examples:
     python deploy/run_checkpoint.py --ckpt hudela390/projet3-act-eval1-v1-no-cube \\
         --target_color yellow --bowl_x 0.16 --bowl_y 0.32
 
-Replaces: run_eval1_ckpt.py, run_hugod_ckpt.py, run_ckpt_best1.py (still work;
-          they forward to infer_sac_legacy only).
+For friend's ``*.pt`` (``ckpt.pt``, ``ckpt_best_1``, ``e1100lat``, …): you run
+this script or ``run_best_ckpt.py`` — they exec ``eval1_v2/infer_sac_legacy.py``
+under the hood (same stack as ``run_eval1_ckpt`` / ``run_hugod_ckpt`` /
+``run_ckpt_best1``; those thin wrappers still work).
 """
 from __future__ import annotations
 
@@ -169,11 +171,11 @@ def build_argv(
     if backend == "sac":
         path = Path(resolved)
         extra = _inject_sac_defaults(extra, info, m)
-        return [str(path), "--checkpoint", str(path)] + extra
+        return ["--checkpoint", str(path)] + extra
 
     if backend == "act":
         extra = _inject_act_defaults(extra, info, m)
-        return [str(resolved), "--policy_path", str(resolved)] + extra
+        return ["--policy_path", str(resolved)] + extra
 
     raise RuntimeError(f"Unknown backend {backend!r}")
 

@@ -88,8 +88,10 @@ CAMERA_INDEX = 1                          # OpenCV index for the wrist camera on
 # Calibration: deploy/calibration/so101_follower.json
 
 # ÔöÇÔöÇ Contract constants (must match the training env) ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
-IMAGE_SIZE = 16          # CNN input H=W. May be auto-bumped to 20 in main() if
-                         # the checkpoint encoder is the 3-conv variant (4x4 -> 4x4 -> 3x3).
+IMAGE_SIZE = 16          # Legacy square CNN side (n_conv=2). Overwritten in main().
+# Rectangular policy CNN input (H, W) in pixels — set in main() from checkpoint.
+POLICY_IMG_H = 16
+POLICY_IMG_W = 16
 SIM_CAM_SIZE = 128       # sim wrist-camera resolution (intermediate resize)
 N_COLORS = 6             # goal-color one-hot length (UNUSED for Eval1 state=12)
 # EVAL1 = 10 Hz. The Eval1 deliverable was trained at control_freq=10 with a
@@ -214,10 +216,10 @@ class CNNEncoder(nn.Module):
       n_conv = 2 (Eval1/Eval2 originals):
           3->32 (4x4 s2) -> 32->64 (4x4 s1) -> Flatten
           Requires 16x16 input  ->  flatten 64 * 4 * 4 = 1024.
-      n_conv = 3 (ckpt_best_*):
+      n_conv = 3 (e.g. ckpt_best_*, e1*lat):
           3->32 (4x4 s2) -> 32->64 (4x4 s2) -> 64->64 (3x3 s1) -> Flatten
-          Requires 32x32 input  ->  flatten 64 * 4 * 4 = 1024.
-          NB: conv.2 stride is 2 in this variant (vs 1 in the 2-conv variant).
+          Policy input HxW is inferred from ``proj.rgb_proj`` in_features (e.g. 32x32 -> 1024,
+          42x32 -> 1792).
     """
     def __init__(self, n_conv: int = 2):
         super().__init__()
@@ -241,58 +243,176 @@ class CNNEncoder(nn.Module):
     def forward(self, rgb_uint8):           # (B, H, W, 3) uint8
         x = rgb_uint8.permute(0, 3, 1, 2).float()
         x = x / 255.0 - 0.5
-        return self.conv(x)                 # (B, 1024)
+        return self.conv(x)
 
 
-def _detect_encoder_arch(encoder_state: dict) -> tuple[int, int]:
-    """Return (n_conv, image_size) inferred from the saved encoder state dict."""
-    if "conv.4.weight" in encoder_state:
-        return 3, 32
-    return 2, 16
+def _detect_encoder_arch(encoder_state: dict) -> int:
+    """Return n_conv (2 or 3) from the saved encoder state dict."""
+    return 3 if "conv.4.weight" in encoder_state else 2
+
+
+def _parse_actor_dims(actor_sd: dict) -> tuple[int, int, int, int, int, int]:
+    """Return (flatten_dim, rgb_emb_dim, state_emb_dim, fusion_dim, n_state, n_act)."""
+    rgb_w = actor_sd["proj.rgb_proj.0.weight"]
+    rgb_emb_dim, flat_dim = int(rgb_w.shape[0]), int(rgb_w.shape[1])
+    s_w = actor_sd["proj.state_proj.0.weight"]
+    state_emb_dim, n_state = int(s_w.shape[0]), int(s_w.shape[1])
+    fusion_dim = rgb_emb_dim + state_emb_dim
+    if int(actor_sd["fc.0.weight"].shape[1]) != fusion_dim:
+        raise RuntimeError(
+            f"Actor fc.0 in_features {actor_sd['fc.0.weight'].shape[1]} "
+            f"!= rgb_emb+state_emb {fusion_dim}"
+        )
+    n_act = int(actor_sd["fc_mean.weight"].shape[0])
+    return flat_dim, rgb_emb_dim, state_emb_dim, fusion_dim, n_state, n_act
+
+
+def _infer_policy_hw_3conv(
+    encoder: "CNNEncoder",
+    target_flatten: int,
+    device: str,
+    *,
+    max_hw: int = 128,
+) -> tuple[int, int]:
+    """Find (H, W) such that the 3-conv encoder output has ``target_flatten`` elements."""
+    enc = encoder.to(device).eval()
+
+    def _check(h: int, w: int) -> bool:
+        x = torch.randint(0, 255, (1, h, w, 3), dtype=torch.uint8, device=device)
+        try:
+            with torch.no_grad():
+                y = enc(x)
+        except RuntimeError:
+            return False
+        return y.numel() == target_flatten
+
+    # Fast paths (common Squint / e1 checkpoints — avoids O(n^2) search).
+    if target_flatten == 1024 and _check(32, 32):
+        return 32, 32
+    if target_flatten == 1792 and _check(42, 32):
+        return 42, 32
+
+    solutions: list[tuple[int, int]] = []
+    for h in range(8, max_hw + 1):
+        for w in range(8, max_hw + 1):
+            x = torch.randint(0, 255, (1, h, w, 3), dtype=torch.uint8, device=device)
+            try:
+                with torch.no_grad():
+                    y = enc(x)
+            except RuntimeError:
+                continue
+            if y.numel() == target_flatten:
+                solutions.append((h, w))
+    if not solutions:
+        raise RuntimeError(
+            f"Could not find policy image H,W for flatten_dim={target_flatten} "
+            f"(3-conv). Pass --policy_image_hw H W explicitly."
+        )
+    if (42, 32) in solutions:
+        return 42, 32
+    if (32, 32) in solutions and target_flatten == 1024:
+        return 32, 32
+    # Prefer largest area (typical training crop); deterministic tie-break.
+    solutions.sort(key=lambda t: t[0] * t[1], reverse=True)
+    return solutions[0]
+
+
+def _infer_policy_hw(
+    encoder: "CNNEncoder",
+    n_conv: int,
+    target_flatten: int,
+    device: str,
+) -> tuple[int, int]:
+    if n_conv == 2:
+        if target_flatten != 1024:
+            raise RuntimeError(
+                f"2-conv encoder expects flatten 1024, checkpoint has {target_flatten}"
+            )
+        return 16, 16
+    return _infer_policy_hw_3conv(encoder, target_flatten, device)
 
 
 class Projection(nn.Module):
-    def __init__(self, n_state):
+    def __init__(self, n_state: int, flatten_dim: int, rgb_emb_dim: int, state_emb_dim: int):
         super().__init__()
-        self.rgb_proj = nn.Sequential(nn.Linear(1024, 50), nn.LayerNorm(50), nn.Tanh())
-        self.state_proj = nn.Sequential(nn.Linear(n_state, 256), nn.LayerNorm(256), nn.ReLU())
+        self.rgb_proj = nn.Sequential(
+            nn.Linear(flatten_dim, rgb_emb_dim),
+            nn.LayerNorm(rgb_emb_dim),
+            nn.Tanh(),
+        )
+        self.state_proj = nn.Sequential(
+            nn.Linear(n_state, state_emb_dim),
+            nn.LayerNorm(state_emb_dim),
+            nn.ReLU(),
+        )
 
     def forward(self, rgb_feat, state):
         return torch.cat([self.rgb_proj(rgb_feat), self.state_proj(state)], dim=-1)
 
 
 class Actor(nn.Module):
-    def __init__(self, n_state=18, n_act=6):
-        super().__init__()
-        self.proj = Projection(n_state)
-        self.fc = nn.Sequential(
-            nn.Linear(306, 256), nn.LayerNorm(256), nn.ReLU(),
-            nn.Linear(256, 256), nn.LayerNorm(256), nn.ReLU(),
-            nn.Linear(256, 256), nn.LayerNorm(256), nn.ReLU(),
-        )
-        self.fc_mean = nn.Linear(256, n_act)
-        self.fc_logstd = nn.Linear(256, n_act)
-        self.register_buffer("action_scale", torch.ones(n_act))
-        self.register_buffer("action_bias", torch.zeros(n_act))
+    """SAC actor; use ``build_actor`` so projection dims match the checkpoint."""
 
-    def forward(self, rgb_feat, state):     # deterministic eval action Ôêê [-1, 1]
+    def forward(self, rgb_feat, state):
         x = self.fc(self.proj(rgb_feat, state))
         return torch.tanh(self.fc_mean(x)) * self.action_scale + self.action_bias
 
 
-# ÔöÇÔöÇ Observation / action helpers ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
-def preprocess_image(rgb):
-    """Real camera frame (1,H,W,3) uint8 ÔåÆ (1,16,16,3) uint8 tensor.
+def build_actor(
+    n_state: int,
+    n_act: int,
+    flat_dim: int,
+    rgb_emb_dim: int,
+    state_emb_dim: int,
+) -> Actor:
+    fusion_dim = rgb_emb_dim + state_emb_dim
+    actor = Actor.__new__(Actor)
+    nn.Module.__init__(actor)
+    actor.proj = Projection(n_state, flat_dim, rgb_emb_dim, state_emb_dim)
+    actor.fc = nn.Sequential(
+        nn.Linear(fusion_dim, 256), nn.LayerNorm(256), nn.ReLU(),
+        nn.Linear(256, 256), nn.LayerNorm(256), nn.ReLU(),
+        nn.Linear(256, 256), nn.LayerNorm(256), nn.ReLU(),
+    )
+    actor.fc_mean = nn.Linear(256, n_act)
+    actor.fc_logstd = nn.Linear(256, n_act)
+    actor.register_buffer("action_scale", torch.ones(n_act))
+    actor.register_buffer("action_bias", torch.zeros(n_act))
+    return actor
 
-    Center-crop to square, resize to the 128px sim resolution, area-downsample
-    to the 16px CNN input ÔÇö same two-step path used during training.
-    """
-    img = rgb[0].cpu().numpy() if torch.is_tensor(rgb) else np.asarray(rgb[0])
+
+def _center_crop_to_aspect(img: np.ndarray, tgt_w: int, tgt_h: int) -> np.ndarray:
+    """Crop (h,w) image toward center so w/h matches tgt_w/tgt_h."""
     h, w = img.shape[:2]
-    c = min(h, w)
-    img = img[(h - c) // 2:(h - c) // 2 + c, (w - c) // 2:(w - c) // 2 + c]
-    img = cv2.resize(img, (SIM_CAM_SIZE, SIM_CAM_SIZE), interpolation=cv2.INTER_AREA)
-    img = cv2.resize(img, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_AREA)
+    ar = tgt_w / tgt_h
+    cur = w / h
+    if cur > ar:
+        new_w = int(round(h * ar))
+        x0 = (w - new_w) // 2
+        return img[:, x0:x0 + new_w]
+    new_h = int(round(w / ar))
+    y0 = (h - new_h) // 2
+    return img[y0:y0 + new_h, :]
+
+
+def preprocess_image(rgb):
+    """Real camera (1,H,W,3) uint8 -> (1,policy_H,policy_W,3) for the CNN.
+
+    Globals POLICY_IMG_H, POLICY_IMG_W set in main(). Square: legacy 128-then-down;
+    rectangular: aspect crop then resize to (W,H) for OpenCV.
+    """
+    global POLICY_IMG_H, POLICY_IMG_W
+    img = rgb[0].cpu().numpy() if torch.is_tensor(rgb) else np.asarray(rgb[0])
+    ph, pw = int(POLICY_IMG_H), int(POLICY_IMG_W)
+    if ph == pw:
+        h, w = img.shape[:2]
+        c = min(h, w)
+        img = img[(h - c) // 2:(h - c) // 2 + c, (w - c) // 2:(w - c) // 2 + c]
+        img = cv2.resize(img, (SIM_CAM_SIZE, SIM_CAM_SIZE), interpolation=cv2.INTER_AREA)
+        img = cv2.resize(img, (ph, pw), interpolation=cv2.INTER_AREA)
+    else:
+        img = _center_crop_to_aspect(img, pw, ph)
+        img = cv2.resize(img, (pw, ph), interpolation=cv2.INTER_AREA)
     return torch.from_numpy(img).unsqueeze(0).to(torch.uint8)
 
 
@@ -317,7 +437,7 @@ def log_step(step, raw_rgb, policy_rgb, qpos, target_qpos, action_raw,
         return
     rr.set_time("step", sequence=step)
     rr.log("camera/raw", rr.Image(raw_rgb))
-    rr.log("camera/policy_input_16x16", rr.Image(policy_rgb))
+    rr.log("camera/policy_input", rr.Image(policy_rgb))
     for i, name in enumerate(JOINT_NAMES):
         rr.log(f"joints/qpos_measured/{name}", rr.Scalars([float(qpos[i])]))
         rr.log(f"joints/qpos_target/{name}", rr.Scalars([float(target_qpos[i])]))
@@ -379,7 +499,10 @@ def main():
                    help="Home preset to fold the arm into AFTER the rollout (servo deg, "
                         "converted to sim rad with gripper remap). Default 'eval1_rest' "
                         "= universal folded pose. Pass an empty string '' to disable.")
-    add_sac_home_cli(p, default_home_pose="eval1_sac_legacy")
+    add_sac_home_cli(p, default_home_pose="auto", allow_auto=True)
+    p.add_argument("--policy_image_hw", type=int, nargs=2, metavar=("H", "W"),
+                   help="Override CNN input height/width in pixels (default: inferred from "
+                        "encoder + proj.rgb_proj weights).")
     args = p.parse_args()
 
     if args.viz:
@@ -398,15 +521,44 @@ def main():
     if not colour_conditioned:
         print("Eval1 checkpoint (state=12): single-cube place, NO colour conditioning "
               "(--goal_color ignored).")
-    # Auto-detect encoder architecture (2-conv vs 3-conv) and image size from the
-    # saved encoder state dict, so a single script handles both ckpt families.
-    n_conv, image_size = _detect_encoder_arch(ckpt["encoder"])
-    global IMAGE_SIZE
-    IMAGE_SIZE = image_size
-    print(f"Detected encoder arch: n_conv={n_conv}, IMAGE_SIZE={image_size}")
+    # Auto-detect encoder depth (2 vs 3 conv) and policy tensor layout from weights.
+    n_conv = _detect_encoder_arch(ckpt["encoder"])
+    flat_dim, rgb_emb_dim, state_emb_dim, fusion_dim, n_state_parsed, n_act = _parse_actor_dims(
+        ckpt["actor"],
+    )
+    if n_state_parsed != n_state_ckpt:
+        raise RuntimeError(f"Inconsistent n_state: actor {n_state_parsed} vs ckpt {n_state_ckpt}")
+
+    if args.home_pose == "auto":
+        # Weight-shape metadata: friend 42x32 / 1792-dim head uses rgb_emb=75 and was
+        # trained from universal physical home. Legacy sim-rest policies use rgb_emb=50.
+        if rgb_emb_dim == 75 or flat_dim == 1792:
+            args.home_pose = "eval1_sac_universal"
+        else:
+            args.home_pose = "eval1_sac_legacy"
+        print(
+            f"[infer] --home_pose auto -> {args.home_pose!r} "
+            f"(rgb_emb_dim={rgb_emb_dim}, flatten_dim={flat_dim})",
+            flush=True,
+        )
+
     encoder = CNNEncoder(n_conv=n_conv).to(device).eval()
-    actor = Actor(n_state=n_state_ckpt).to(device).eval()
     encoder.load_state_dict(ckpt["encoder"])
+
+    global POLICY_IMG_H, POLICY_IMG_W, IMAGE_SIZE
+    if args.policy_image_hw is not None:
+        POLICY_IMG_H, POLICY_IMG_W = int(args.policy_image_hw[0]), int(args.policy_image_hw[1])
+    else:
+        POLICY_IMG_H, POLICY_IMG_W = _infer_policy_hw(encoder, n_conv, flat_dim, device)
+    IMAGE_SIZE = POLICY_IMG_H  # compat: square policies use H==W
+
+    print(
+        f"Detected encoder: n_conv={n_conv}, flatten_dim={flat_dim}, "
+        f"policy_image_hw=({POLICY_IMG_H}, {POLICY_IMG_W}), "
+        f"rgb_emb={rgb_emb_dim}, state_emb={state_emb_dim}, fusion={fusion_dim}"
+    )
+
+    actor = build_actor(n_state_ckpt, n_act, flat_dim, rgb_emb_dim, state_emb_dim).to(device).eval()
     actor.load_state_dict(ckpt["actor"])
     print(f"Loaded checkpoint (trained to step {ckpt.get('global_step', '?')}), n_state={n_state_ckpt}"
           + (f" ÔåÆ feeding bowl_xyz={args.bowl_xyz}" if use_bowl_xyz else ""))

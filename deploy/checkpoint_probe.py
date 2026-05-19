@@ -32,7 +32,11 @@ class CheckpointInfo:
     colour_conditioned: bool | None = None
     use_bowl_xyz: bool | None = None
     n_conv: int | None = None
-    image_size: int | None = None
+    image_size: int | None = None  # legacy: square side when H==W; else None
+    sac_flatten_dim: int | None = None
+    sac_rgb_emb_dim: int | None = None
+    sac_policy_h: int | None = None
+    sac_policy_w: int | None = None
     global_step: int | str | None = None
     ckpt_keys: list[str] = field(default_factory=list)
 
@@ -64,10 +68,8 @@ def _load_manifest(ckpt_path: Path) -> tuple[dict[str, Any], str | None]:
         return json.load(f), str(mp)
 
 
-def _detect_sac_encoder(encoder_state: dict) -> tuple[int, int]:
-    if "conv.4.weight" in encoder_state:
-        return 3, 32
-    return 2, 16
+def _detect_sac_n_conv(encoder_state: dict) -> int:
+    return 3 if "conv.4.weight" in encoder_state else 2
 
 
 def probe_sac(path: Path) -> CheckpointInfo:
@@ -99,17 +101,29 @@ def probe_sac(path: Path) -> CheckpointInfo:
     if n_state not in (12, 18, 21):
         info.warnings.append(f"Unsupported n_state={n_state} (expected 12, 18, or 21)")
 
-    n_conv, image_size = _detect_sac_encoder(ckpt["encoder"])
+    n_conv = _detect_sac_n_conv(ckpt["encoder"])
     info.n_conv = n_conv
-    info.image_size = image_size
     info.global_step = ckpt.get("global_step", ckpt.get("step", "?"))
+
+    # Dims + policy CNN input HxW (same logic as deploy/eval1_v2/infer_sac_legacy.py).
+    _ev2 = _DEPLOY / "eval1_v2"
+    if str(_ev2) not in sys.path:
+        sys.path.insert(0, str(_ev2))
+    import infer_sac_legacy as _sac  # noqa: E402
+
+    fd, rbd, sed, _fus, _ns2, _na = _sac._parse_actor_dims(ckpt["actor"])
+    info.sac_flatten_dim = fd
+    info.sac_rgb_emb_dim = rbd
+    enc = _sac.CNNEncoder(n_conv=n_conv).eval()
+    enc.load_state_dict(ckpt["encoder"])
+    ph, pw = _sac._infer_policy_hw(enc, n_conv, fd, "cpu")
+    info.sac_policy_h, info.sac_policy_w = ph, pw
+    info.image_size = ph if ph == pw else None  # legacy field
 
     info.suggested_script = manifest.get(
         "infer_script", "deploy/eval1_v2/infer_sac_legacy.py"
     )
-    info.suggested_home_pose = manifest.get(
-        "home_pose", "eval1_sac_legacy" if n_state == 12 else "eval1_sac_legacy"
-    )
+    info.suggested_home_pose = manifest.get("home_pose", "auto")
     if n_state in (18, 21):
         info.warnings.append(
             "Eval2/colour SAC: pass --goal_color 0..5; use --bowl_xyz if n_state=21."
@@ -243,7 +257,8 @@ def format_report(info: CheckpointInfo) -> str:
         lines += [
             f"n_state:        {info.n_state}  "
             f"(colour={info.colour_conditioned}, bowl_xyz={info.use_bowl_xyz})",
-            f"CNN:            n_conv={info.n_conv}, image_size={info.image_size}",
+            f"CNN:            n_conv={info.n_conv}, flatten={info.sac_flatten_dim}, "
+            f"policy_input_HxW=({info.sac_policy_h}, {info.sac_policy_w}), rgb_emb={info.sac_rgb_emb_dim}",
             f"global_step:    {info.global_step}",
             f"ckpt keys:      {', '.join(info.ckpt_keys[:12])}"
             + (" ..." if len(info.ckpt_keys) > 12 else ""),
@@ -256,8 +271,10 @@ def format_report(info: CheckpointInfo) -> str:
             f"action_dim:     {info.action_dim}",
         ]
     if info.suggested_script:
-        lines.append(f"suggested_run:  python deploy/run_checkpoint.py --ckpt <path>  "
-                     f"# -> {info.suggested_script}")
+        lines.append(
+            "suggested_run:  python deploy/run_best_ckpt.py --ckpt <path>   "
+            f"(same as run_checkpoint.py; engine: {info.suggested_script})"
+        )
     if info.suggested_home_pose:
         lines.append(f"home_pose:      {info.suggested_home_pose}")
     for w in info.warnings:

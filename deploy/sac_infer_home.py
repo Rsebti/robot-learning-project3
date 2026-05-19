@@ -14,7 +14,11 @@ def add_sac_home_cli(
     parser: argparse.ArgumentParser,
     *,
     default_home_pose: str = "eval1_sac_legacy",
+    allow_auto: bool = False,
 ) -> None:
+    choices = list_home_poses()
+    if allow_auto:
+        choices = ["auto", *choices]
     parser.add_argument(
         "--home",
         action=argparse.BooleanOptionalAction,
@@ -24,8 +28,10 @@ def add_sac_home_cli(
     parser.add_argument(
         "--home_pose",
         default=default_home_pose,
-        choices=list_home_poses(),
-        help="Named preset in deploy/homes.py",
+        choices=choices,
+        help="Named preset in deploy/homes.py"
+        + ("; use 'auto' to pick from checkpoint (friend 1792-dim vs legacy 1024-dim)."
+           if allow_auto else ""),
     )
     parser.add_argument(
         "--home_countdown_s",
