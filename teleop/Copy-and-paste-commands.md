@@ -171,10 +171,13 @@ CAMERA_INDEX=0 \ FOLLOWER_PORT=/dev/tty.usbmodem<correct_one> \
 
 ----
 
-## Friend handoff — run Eval 1 inference on a fresh Mac
+## Friend handoff — record Eval 1 demos on a fresh Mac
 
-You do **not** need to record anything — dataset is already on HF and the
-policy is trained. Three steps to deploy.
+You have the robot. You're going to record the real Eval 1 dataset
+(10 demos × 6 colors = 60 demos, ~55 s per episode, 30 FPS) using the
+same `teleop/record_eval1.sh` script Tommaso used for the smoke test,
+pushing into the same HF dataset (`osammotg1/eval1-eth-hg-smoketest-2`).
+Three steps.
 
 ### 1. Pull the repo
 
@@ -185,8 +188,9 @@ policy is trained. Three steps to deploy.
 
 ### 2. Install the SO-101 calibration files
 
-The exact JSONs Tommaso used to record the dataset are committed under
-`teleop/calibration/`. Copy them into lerobot's cache (mirror the paths):
+The exact JSONs Tommaso used (homing offsets + servo ranges) are committed
+under `teleop/calibration/`. Copy them into lerobot's cache (mirror the
+paths):
 
   mkdir -p ~/.cache/huggingface/lerobot/calibration/robots/so_follower
   mkdir -p ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader
@@ -199,45 +203,52 @@ The exact JSONs Tommaso used to record the dataset are committed under
   ls ~/.cache/huggingface/lerobot/calibration/robots/so_follower/
   ls ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/
 
-⚠ Do **not** run `lerobot-calibrate` — it would overwrite these with new
-homing offsets and silently break the trained policy.
+⚠ Do **not** run `lerobot-calibrate` — it would overwrite these and the
+recorded data would no longer match Tommaso's calibrated frame, breaking
+any policy trained on the combined dataset.
 
-### 3. Run inference on the real robot
+### 3. Record the 60-demo Eval 1 dataset
 
-Plug follower + leader (leader is only used to back-drive the arm during
-the reset window between rollouts) + the wrist camera. Then:
+Plug in the follower + leader + wrist camera. Find your USB ports + the
+camera index on this Mac (they will differ from Tommaso's defaults):
+
+  lerobot-find-port           # → note follower and leader paths
+  lerobot-find-cameras opencv # → note wrist camera index
+
+Then:
 
   hf auth whoami      # must print osammotg1; if not: hf auth login
 
+  REPO_ID=osammotg1/eval1-eth-hg-smoketest-2 \
   FOLLOWER_PORT=/dev/tty.usbmodem<YOUR_FOLLOWER> \
   LEADER_PORT=/dev/tty.usbmodem<YOUR_LEADER> \
-  CAMERA_INDEX=0 \
-  POLICY_PATH=osammotg1/projet3-act-eval1-v1-dark-shadow \
-  POLICY_DEVICE=mps \
-  NUM_EPISODES=5 \
-  EPISODE_TIME_S=20 \
-  RESET_TIME_S=10 \
-  PUSH_TO_HUB=true \
-    bash deploy/infer_eval1.sh
+  CAM_INDEX=0 \
+    bash teleop/record_eval1.sh
 
-Tip: ask Tommaso for the latest `POLICY_PATH` if a newer checkpoint
-(trained on `osammotg1/eval1-eth-hg-smoketest-2`) is out by the time you
-run this.
+The script walks you through 6 colors (yellow → blue → green → violet →
+red → orange), 10 episodes each, with an ENTER-to-start prompt before each
+color and a push-to-HF after each color. Defaults baked in: `EPISODE_TIME_S=55`,
+`RESET_TIME_S=8`, `FPS=30`.
 
-To find your USB ports + camera index on a fresh Mac:
+If the run is interrupted mid-way, resume by setting `START_FROM` to the
+color you stopped on (the dataset is preserved on HF + locally):
 
-  lerobot-find-port
-  lerobot-find-cameras opencv
+  REPO_ID=osammotg1/eval1-eth-hg-smoketest-2 \
+  START_FROM=green \
+  FOLLOWER_PORT=/dev/tty.usbmodem<YOUR_FOLLOWER> \
+  LEADER_PORT=/dev/tty.usbmodem<YOUR_LEADER> \
+  CAM_INDEX=0 \
+    bash teleop/record_eval1.sh
 
-The eval rollouts get auto-pushed to a `eval_*` dataset on HF — the URL
-prints at the end of the run.
+The Rerun viewer (wrist-cam + joint states) opens automatically thanks to
+the `--display_data=true` flag inside the script.
 
 ----
 
 ### Claude Code prompt for the friend (paste at session start on the lab Mac)
 
 ```text
-You are helping me deploy a trained ACT policy on the SO-101 follower
+You are helping me record demonstration data on the SO-101 follower
 for Eval 1 of the ETH Robot Learning project. The repo is checked out
 at the current working directory, on branch `tom-act`.
 
@@ -248,10 +259,10 @@ Two calibration JSON files are committed in the repo:
 LeRobot expects these under ~/.cache/huggingface/lerobot/calibration/
 with the same relative paths.
 
-Whenever calibration is referenced — e.g. lerobot-record, lerobot-replay,
-or deploy/infer_eval1.sh reports "calibration not found", or before the
-first use of this SO-101 kit on this machine — DO NOT run
-`lerobot-calibrate`. Instead copy the committed JSONs into place:
+Whenever calibration is referenced — e.g. lerobot-record reports
+"calibration not found", or before the first use of this SO-101 kit
+on this machine — DO NOT run `lerobot-calibrate`. Instead copy the
+committed JSONs into place:
 
   mkdir -p ~/.cache/huggingface/lerobot/calibration/robots/so_follower
   mkdir -p ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader
@@ -261,15 +272,16 @@ first use of this SO-101 kit on this machine — DO NOT run
      ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/
 
 These are the exact calibration values Tommaso used to record the
-osammotg1/eval1-eth-hg-smoketest-2 dataset, so the trained policy
-expects this calibrated frame. Re-running lerobot-calibrate would
-shift the homing offsets and silently break the policy.
+osammotg1/eval1-eth-hg-smoketest-2 dataset. Recording with a fresh
+calibration would shift the homing offsets and the new demos would
+not be consistent with the existing episodes in that HF dataset.
 
 `lerobot-find-port` and `lerobot-find-cameras opencv` are fine to run
-when needed to discover USB paths and camera index — but never
+to discover USB paths and the wrist camera index — but never
 overwrite the calibration JSONs.
 
-To deploy: run `bash deploy/infer_eval1.sh` with the env-vars from
-the "Friend handoff — run Eval 1 inference on a fresh Mac" section
-of teleop/Copy-and-paste-commands.md.
+To record: run `bash teleop/record_eval1.sh` with the env-vars from
+the "Friend handoff — record Eval 1 demos on a fresh Mac" section
+of teleop/Copy-and-paste-commands.md. Use START_FROM=<color> to
+resume mid-run after an interruption.
 ```
