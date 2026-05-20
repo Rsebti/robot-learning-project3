@@ -134,11 +134,16 @@ def build_gallery(verify_dir: Path, rows: list[dict], tcp_good_mm: float) -> Non
     parts = []
     for r in rows:
         ep = r["episode_index"]
-        ok = r.get("transfer_ok", False)
-        color = "#2d6a4f" if ok else "#9b2226"
+        ok = r.get("transfer_ok")
+        if ok is None:
+            color = "#555"
+            label = "SKIP (CPU)"
+        else:
+            color = "#2d6a4f" if ok else "#9b2226"
+            label = "GOOD" if ok else "BAD"
         parts.append(f"""
 <div class="card" style="border-color:{color}">
-<h3>ep {ep} <span>{'GOOD' if ok else 'BAD'}</span></h3>
+<h3>ep {ep} <span>{label}</span></h3>
 <p>tcp@grasp={r.get('tcp_err_mm_at_grasp', 'n/a')} mm |
    hold={r.get('grasp_static_run_len','?')} fr |
    grip={r.get('grasp_gripper_deg','?')} deg</p>
@@ -196,10 +201,15 @@ def main() -> int:
             except Exception as exc:
                 row["sim_error"] = str(exc)
                 print(f"[verify] sim ep {ep} failed: {exc}")
-        row["transfer_ok"] = row.get("tcp_err_mm_at_grasp", 999.0) <= args.tcp_good_mm
+            row["transfer_ok"] = row.get("tcp_err_mm_at_grasp", 999.0) <= args.tcp_good_mm
+            status = "OK" if row["transfer_ok"] else "BAD"
+        else:
+            row["transfer_ok"] = None
+            row["sim_skipped"] = True
+            status = "SKIP (real image only)"
         (ep_out / "metrics.json").write_text(json.dumps(row, indent=2), encoding="utf-8")
         summary.append(row)
-        print(f"  ep {ep}: tcp={row.get('tcp_err_mm_at_grasp','skip')}  {'OK' if row.get('transfer_ok') else 'BAD'}")
+        print(f"  ep {ep}: tcp={row.get('tcp_err_mm_at_grasp','skip')}  {status}")
 
     pd.DataFrame(summary).to_csv(verify_dir / "transfer_summary.csv", index=False)
     build_gallery(verify_dir, summary, args.tcp_good_mm)

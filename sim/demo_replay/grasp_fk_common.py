@@ -32,14 +32,60 @@ def make_fk_stack(kcfg: KinematicsConfig | None = None):
     return kcfg, fk, mcfg
 
 
+def grasp_point_user_from_motor_deg(
+    motor_deg: np.ndarray,
+    fk: SO101FK,
+    mcfg: MotorToUrdfConfig,
+    *,
+    fk_target: str = "gripper_tip",
+) -> np.ndarray:
+    """FK grasp reference in user frame.
+
+    ``gripper_tip`` — center between closed jaws (offset from ``config.yaml``).
+    ``gripper_frame`` — rigid gripper link origin (URDF EE frame).
+    """
+    q = mcfg.motor_to_urdf_rad(np.asarray(motor_deg, dtype=float).reshape(-1)[:6])
+    pos_urdf = fk.fk(q, target=fk_target)["position"]
+    return urdf_xyz_to_user(pos_urdf)
+
+
 def tip_user_from_motor_deg(
     motor_deg: np.ndarray,
     fk: SO101FK,
     mcfg: MotorToUrdfConfig,
 ) -> np.ndarray:
-    q = mcfg.motor_to_urdf_rad(np.asarray(motor_deg, dtype=float).reshape(-1)[:6])
-    tip_urdf = fk.fk(q, target="gripper_tip")["position"]
-    return urdf_xyz_to_user(tip_urdf)
+    """Backward-compatible alias: gripper_tip FK."""
+    return grasp_point_user_from_motor_deg(motor_deg, fk, mcfg, fk_target="gripper_tip")
+
+
+def cube_center_user_from_grasp(
+    grasp_user: np.ndarray,
+    kcfg: KinematicsConfig,
+    *,
+    placement: str = "grasp_xy_table_z",
+    z_above_table_m: float | None = None,
+) -> np.ndarray:
+    """Cube centroid (user frame, m) from FK grasp reference.
+
+    ``grasp_xy_table_z`` / ``table_plus_half`` — **XY** from grasp (between jaws);
+        **Z** = ``table_z_m + z_above_table_m`` (default: cube half-height on table).
+    ``inside_grasp`` — full XYZ at grasp point (cube center inside jaws).
+    ``tip_minus_half`` — Z = grasp_z - cube half-height (top-down).
+    """
+    g = np.asarray(grasp_user, dtype=float).reshape(3)
+    out = g.copy()
+    z_off = kcfg.cube_half_height_m if z_above_table_m is None else float(z_above_table_m)
+    if placement in ("inside_grasp", "grasp_xyz", "grasp_center"):
+        pass
+    elif placement in ("grasp_xy_table_z", "table_plus_half"):
+        out[2] = kcfg.table_z_m + z_off
+    elif placement == "tip_minus_half":
+        out[2] = g[2] - kcfg.cube_half_height_m
+    elif placement == "tip_z":
+        pass
+    else:
+        raise ValueError(f"unknown cube placement {placement!r}")
+    return out
 
 
 def cube_center_user_from_tip(
@@ -48,18 +94,8 @@ def cube_center_user_from_tip(
     *,
     z_mode: str = "tip_minus_half",
 ) -> np.ndarray:
-    """Map grasp tip FK to assumed cube centroid (user frame, m)."""
-    tip = np.asarray(tip_user, dtype=float).reshape(3)
-    out = tip.copy()
-    if z_mode == "tip_minus_half":
-        out[2] = tip[2] - kcfg.cube_half_height_m
-    elif z_mode == "tip_z":
-        pass
-    elif z_mode == "table_plus_half":
-        out[2] = kcfg.table_z_m + kcfg.cube_half_height_m
-    else:
-        raise ValueError(f"unknown z_mode {z_mode!r}")
-    return out
+    """Deprecated name — use :func:`cube_center_user_from_grasp`."""
+    return cube_center_user_from_grasp(tip_user, kcfg, placement=z_mode)
 
 
 def cube_pose_urdf_world(cube_xyz_user: np.ndarray) -> list[float]:
@@ -200,6 +236,9 @@ def episode_record_for_isaac(row: dict) -> dict:
         "grasp_pick_reason": row["grasp_pick_reason"],
         "grasp_gripper_deg": row["grasp_gripper_deg"],
         "grasp_static_run_len": row.get("grasp_static_run_len", 0),
+        "fk_target": row.get("fk_target", "gripper_tip"),
+        "cube_placement": row.get("cube_placement", row.get("cube_z_mode")),
+        "grasp_xyz_user_m": row["grasp_xyz_user_m"],
         "tip_xyz_user_m": row["tip_xyz_user_m"],
         "cube_xyz_user_m": row["cube_xyz_user_m"],
         "cube_pose_urdf_world": row["cube_pose_urdf_world"],

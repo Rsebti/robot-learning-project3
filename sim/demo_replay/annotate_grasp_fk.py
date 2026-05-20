@@ -4,9 +4,11 @@ annotate_grasp_fk.py — per-episode cube pose from quasi-static grasp FK.
 
 Dataset default: Rsebti/projet3_demos_v1 (LeRobot v3, 6 motor deg + wrist video).
 
-Assumption (real2sim-lite):
-  At grasp, the arm is quasi-static and the gripper tip FK position maps to the
-  cube: XY = tip XY, Z = tip_z - cube_half_height (tip resting on top face).
+Assumption (real2sim-lite, default):
+  Quasi-static clamped grasp → FK at ``gripper_tip`` (center between closed jaws).
+  Cube spawn: **XY = FK grasp (between jaws)**, **Z = table_z + z_above_table**
+  (default z_above_table = 0.0125 m cube half-height; override with
+  ``--cube_z_above_table_m 0.01`` for table + 10 mm).
 
 Outputs under --output_dir:
   grasp_cube_annotations.csv   one row per episode
@@ -32,15 +34,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 from sim.demo_replay.grasp_fk_common import (  # noqa: E402
     MOTOR_NAMES,
-    cube_center_user_from_tip,
+    cube_center_user_from_grasp,
     cube_pose_urdf_world,
     episode_record_for_isaac,
+    grasp_point_user_from_motor_deg,
     hf_snapshot_dir,
     load_parquet_dataset,
     make_fk_stack,
     pick_grasp_frame_rollout,
     stack_state_column,
-    tip_user_from_motor_deg,
     user_xyz_to_urdf,
 )
 
@@ -82,7 +84,9 @@ def annotate_episode(
     max_arm_vel_deg_s: float,
     min_static_frames: int,
     gripper_closed_max_deg: float,
-    cube_z_mode: str,
+    fk_target: str,
+    cube_placement: str,
+    z_above_table_m: float,
 ) -> dict:
     obs = stack_state_column(ep_df["observation.state"])
     act = stack_state_column(ep_df["action"]) if "action" in ep_df.columns else obs.copy()
@@ -96,10 +100,12 @@ def annotate_episode(
     )
     frame_index = int(ep_df["frame_index"].iloc[fi_local])
     grasp_motor = obs[fi_local].tolist()
-    tip_user = tip_user_from_motor_deg(grasp_motor, fk, mcfg)
-    cube_user = cube_center_user_from_tip(tip_user, kcfg, z_mode=cube_z_mode)
+    grasp_user = grasp_point_user_from_motor_deg(grasp_motor, fk, mcfg, fk_target=fk_target)
+    cube_user = cube_center_user_from_grasp(
+        grasp_user, kcfg, placement=cube_placement, z_above_table_m=z_above_table_m,
+    )
     cube_urdf = user_xyz_to_urdf(cube_user)
-    table_z_expected = kcfg.table_z_m + kcfg.cube_half_height_m
+    table_z_expected = kcfg.table_z_m + z_above_table_m
     z_err_mm = (cube_user[2] - table_z_expected) * 1000.0
 
     in_ws = kcfg.in_workspace(cube_urdf)
@@ -114,11 +120,15 @@ def annotate_episode(
         "grasp_gripper_deg": float(diag["gripper_deg"]),
         "grasp_static_run_len": int(diag.get("static_run_len", 0)),
         "grasp_motor_deg": [float(x) for x in grasp_motor],
-        "tip_xyz_user_m": [float(x) for x in tip_user],
+        "fk_target": fk_target,
+        "cube_placement": cube_placement,
+        "cube_z_above_table_m": float(z_above_table_m),
+        "grasp_xyz_user_m": [float(x) for x in grasp_user],
+        "tip_xyz_user_m": [float(x) for x in grasp_user],
         "cube_xyz_user_m": [float(x) for x in cube_user],
         "cube_xyz_urdf_m": [float(x) for x in cube_urdf],
         "cube_pose_urdf_world": cube_pose_urdf_world(cube_user),
-        "cube_z_mode": cube_z_mode,
+        "cube_z_mode": cube_placement,
         "table_z_expected_user_m": float(table_z_expected),
         "cube_z_err_vs_table_mm": float(z_err_mm),
         "in_workspace": bool(in_ws),
@@ -137,7 +147,8 @@ def write_report(rows: list[dict], out_dir: Path, repo_id: str, meta: dict) -> N
         "",
         f"- Episodes: **{len(rows)}**",
         f"- FPS: **{meta.get('fps', '?')}**",
-        f"- Cube Z mode: **{meta.get('cube_z_mode', '?')}**",
+        f"- FK target: **{meta.get('fk_target', '?')}**",
+        f"- Cube placement: **{meta.get('cube_placement', meta.get('cube_z_mode', '?'))}**",
         "",
         "## Summary",
         "",
@@ -159,7 +170,7 @@ def write_report(rows: list[dict], out_dir: Path, repo_id: str, meta: dict) -> N
             "## Columns (CSV)",
             "",
             "`cube_xyz_user_m` / `cube_pose_urdf_world` → spawn cube in Isaac replay.",
-            "`grasp_motor_deg` → FK audit; same frame used for cube XY.",
+            "`grasp_xyz_user_m` → FK between jaws; cube XY matches, Z = table + offset.",
             "",
         ])
     (out_dir / "annotation_report.md").write_text("\n".join(lines), encoding="utf-8")
@@ -179,11 +190,24 @@ def main() -> int:
                    help="Min consecutive quasi-static frames for a 'clamped' hold (~0.27s @ 30Hz).")
     p.add_argument("--gripper_closed_max_deg", type=float, default=35.0,
                    help="Gripper pos (deg) must be <= this during the hold.")
+    p.add_argument("--fk_target", choices=["gripper_tip", "gripper_frame"],
+                   default="gripper_tip",
+                   help="FK frame: gripper_tip=between closed jaws; gripper_frame=rigid EE link.")
+    p.add_argument("--cube_placement",
+                   choices=["grasp_xy_table_z", "inside_grasp", "grasp_center", "grasp_xyz",
+                            "table_plus_half", "tip_minus_half", "tip_z"],
+                   default="grasp_xy_table_z",
+                   help="Default: XY from FK grasp (jaws), Z = table + cube half-height.")
+    p.add_argument("--cube_z_above_table_m", type=float, default=None,
+                   help="Cube center height above table surface (m). Default: cube half-height "
+                        "from config (0.0125). Use 0.01 for table+10mm.")
     p.add_argument("--cube_z_mode", choices=["tip_minus_half", "tip_z", "table_plus_half"],
-                   default="table_plus_half",
-                   help="Pick-place demos: table_plus_half; probe top-grasp: tip_minus_half.")
+                   default=None,
+                   help="Deprecated alias for --cube_placement.")
     p.add_argument("--max_episodes", type=int, default=None)
     args = p.parse_args()
+    if args.cube_z_mode is not None:
+        args.cube_placement = args.cube_z_mode
 
     out_dir = args.output_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -205,6 +229,11 @@ def main() -> int:
     print("[annotate] loading parquet ...")
     df = load_parquet_dataset(snapshot)
     kcfg, fk, mcfg = make_fk_stack()
+    z_above_table_m = (
+        float(args.cube_z_above_table_m)
+        if args.cube_z_above_table_m is not None
+        else kcfg.cube_half_height_m
+    )
 
     eps = sorted(df["episode_index"].unique().tolist())
     if args.max_episodes is not None:
@@ -225,7 +254,9 @@ def main() -> int:
             max_arm_vel_deg_s=args.max_arm_vel_deg_s,
             min_static_frames=args.min_static_frames,
             gripper_closed_max_deg=args.gripper_closed_max_deg,
-            cube_z_mode=args.cube_z_mode,
+            fk_target=args.fk_target,
+            cube_placement=args.cube_placement,
+            z_above_table_m=z_above_table_m,
         )
         rows.append(row)
         episodes_json[str(ep)] = episode_record_for_isaac(row)
@@ -260,7 +291,10 @@ def main() -> int:
                 "repo_id": args.repo_id,
                 "snapshot": str(snapshot),
                 "fps": args.fps,
-                "cube_z_mode": args.cube_z_mode,
+                "fk_target": args.fk_target,
+                "cube_placement": args.cube_placement,
+                "cube_z_above_table_m": z_above_table_m,
+                "cube_z_mode": args.cube_placement,
                 "grasp_selection": "static_hold_most_closed_last_frame",
                 "episodes": episodes_json,
             },
@@ -271,7 +305,10 @@ def main() -> int:
 
     meta_out = {
         "fps": args.fps,
-        "cube_z_mode": args.cube_z_mode,
+        "fk_target": args.fk_target,
+        "cube_placement": args.cube_placement,
+        "cube_z_above_table_m": z_above_table_m,
+        "cube_z_mode": args.cube_placement,
         "min_static_frames": args.min_static_frames,
     }
     write_report(rows, out_dir, args.repo_id, meta_out)

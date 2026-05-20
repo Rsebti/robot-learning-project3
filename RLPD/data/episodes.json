@@ -3,7 +3,10 @@
   "repo_id": "Rsebti/projet3_demos_v1",
   "snapshot": "C:\\Users\\hugod\\.cache\\huggingface\\hub\\datasets--Rsebti--projet3_demos_v1\\snapshots\\80fab4934a7b7f464b43edcb46d28dbf785b6451",
   "fps": 30.0,
-  "cube_z_mode": "table_plus_half",
+  "fk_target": "gripper_tip",
+  "cube_placement": "grasp_xy_table_z",
+  "cube_z_above_table_m": 0.0125,
+  "cube_z_mode": "grasp_xy_table_z",
   "grasp_selection": "static_hold_most_closed_last_frame",
   "episodes": {
     "0": {
@@ -14,6 +17,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 33.30585479736328,
       "grasp_static_run_len": 20,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.0042902091208344845,
+        0.23100825138040354,
+        0.11163587088976983
+      ],
       "tip_xyz_user_m": [
         0.0042902091208344845,
         0.23100825138040354,
@@ -5819,6 +5829,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 21.51690101623535,
       "grasp_static_run_len": 27,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.05264517637138803,
+        0.2329935694367832,
+        0.08696431663997786
+      ],
       "tip_xyz_user_m": [
         -0.05264517637138803,
         0.2329935694367832,
@@ -11760,6 +11777,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 22.8359432220459,
       "grasp_static_run_len": 10,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.04071972281415665,
+        0.25124622908677086,
+        0.10557011538951235
+      ],
       "tip_xyz_user_m": [
         -0.04071972281415665,
         0.25124622908677086,
@@ -18245,6 +18269,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.2366034984588623,
       "grasp_static_run_len": 10,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.027391943341731124,
+        0.2373575870377041,
+        0.07847231099510373
+      ],
       "tip_xyz_user_m": [
         0.027391943341731124,
         0.2373575870377041,
@@ -25257,6 +25288,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.483924150466919,
       "grasp_static_run_len": 18,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.009234388718506535,
+        0.14692510913545034,
+        0.007505876020397567
+      ],
       "tip_xyz_user_m": [
         -0.009234388718506535,
         0.14692510913545034,
@@ -29906,6 +29944,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.483924150466919,
       "grasp_static_run_len": 30,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.000138172204373115,
+        0.15089437087522958,
+        0.010085757963655559
+      ],
       "tip_xyz_user_m": [
         0.000138172204373115,
         0.15089437087522958,
@@ -35303,6 +35348,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 34.13025665283203,
       "grasp_static_run_len": 31,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.10132340535355681,
+        0.23831738089541898,
+        0.06326069579183322
+      ],
       "tip_xyz_user_m": [
         -0.10132340535355681,
         0.23831738089541898,
@@ -41737,6 +41789,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.483924150466919,
       "grasp_static_run_len": 10,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.01925708797426011,
+        0.2579429972147904,
+        0.09915018647878854
+      ],
       "tip_xyz_user_m": [
         0.01925708797426011,
         0.2579429972147904,
@@ -48137,6 +48196,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 6.677658557891846,
       "grasp_static_run_len": 8,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.02331743390236439,
+        0.2423504035535235,
+        0.11301333053055164
+      ],
       "tip_xyz_user_m": [
         -0.02331743390236439,
         0.2423504035535235,
@@ -54248,6 +54314,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 15.663643836975098,
       "grasp_static_run_len": 12,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.007629898246183181,
+        0.2629016470018261,
+        0.10568933800292143
+      ],
       "tip_xyz_user_m": [
         0.007629898246183181,
         0.2629016470018261,
@@ -59883,6 +59956,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 25.391592025756836,
       "grasp_static_run_len": 23,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.033262551393507984,
+        0.33227649341535004,
+        0.04523779748469285
+      ],
       "tip_xyz_user_m": [
         0.033262551393507984,
         0.33227649341535004,
@@ -66266,6 +66346,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 13.767518997192383,
       "grasp_static_run_len": 10,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.119539671454434,
+        0.29087336229237953,
+        0.06865696373985629
+      ],
       "tip_xyz_user_m": [
         -0.119539671454434,
         0.29087336229237953,
@@ -73550,6 +73637,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.1541632413864136,
       "grasp_static_run_len": 31,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.0021458288232745724,
+        0.14826247197033932,
+        0.008417324829929088
+      ],
       "tip_xyz_user_m": [
         -0.0021458288232745724,
         0.14826247197033932,
@@ -79219,6 +79313,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.483924150466919,
       "grasp_static_run_len": 46,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.0023902592413691673,
+        0.14801212720767873,
+        0.007992070111589367
+      ],
       "tip_xyz_user_m": [
         -0.0023902592413691673,
         0.14801212720767873,
@@ -84429,6 +84530,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.6488046646118164,
       "grasp_static_run_len": 36,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.0021737193330584282,
+        0.15289884775013282,
+        0.012002610661846519
+      ],
       "tip_xyz_user_m": [
         -0.0021737193330584282,
         0.15289884775013282,
@@ -90506,6 +90614,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.6488046646118164,
       "grasp_static_run_len": 29,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.001342384597615458,
+        0.15128898193807355,
+        0.010347337360143288
+      ],
       "tip_xyz_user_m": [
         0.001342384597615458,
         0.15128898193807355,
@@ -95614,6 +95729,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.2366034984588623,
       "grasp_static_run_len": 31,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.003362898614738926,
+        0.14741089195441986,
+        0.008728905087131478
+      ],
       "tip_xyz_user_m": [
         0.003362898614738926,
         0.14741089195441986,
@@ -101130,6 +101252,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.2366034984588623,
       "grasp_static_run_len": 20,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.0025341406781708006,
+        0.15060380482278107,
+        0.0080444170238015
+      ],
       "tip_xyz_user_m": [
         -0.0025341406781708006,
         0.15060380482278107,
@@ -108754,6 +108883,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.1541632413864136,
       "grasp_static_run_len": 25,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.03626798796843528,
+        0.2527141830347279,
+        0.09693430448595433
+      ],
       "tip_xyz_user_m": [
         0.03626798796843528,
         0.2527141830347279,
@@ -114678,6 +114814,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.2366034984588623,
       "grasp_static_run_len": 26,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.007690732413280486,
+        0.14923301644122594,
+        0.008785476505709697
+      ],
       "tip_xyz_user_m": [
         -0.007690732413280486,
         0.14923301644122594,
@@ -119140,6 +119283,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 0.9068425297737122,
       "grasp_static_run_len": 14,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.16156874027664814,
+        0.23154236176131002,
+        0.06980827888743281
+      ],
       "tip_xyz_user_m": [
         0.16156874027664814,
         0.23154236176131002,
@@ -124520,6 +124670,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 8.903545379638672,
       "grasp_static_run_len": 15,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.1938753468254162,
+        0.22411183254786587,
+        0.058924394156469065
+      ],
       "tip_xyz_user_m": [
         -0.1938753468254162,
         0.22411183254786587,
@@ -130291,6 +130448,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.483924150466919,
       "grasp_static_run_len": 11,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.03427165391554796,
+        0.2571984589747628,
+        0.12722673048728092
+      ],
       "tip_xyz_user_m": [
         -0.03427165391554796,
         0.2571984589747628,
@@ -135705,6 +135869,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 34.78977584838867,
       "grasp_static_run_len": 13,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.022406938298248302,
+        0.28406347358179096,
+        0.11901094427844966
+      ],
       "tip_xyz_user_m": [
         0.022406938298248302,
         0.28406347358179096,
@@ -140269,6 +140440,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.6488046646118164,
       "grasp_static_run_len": 26,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.008129969712570132,
+        0.14849560584226337,
+        0.008447841763790834
+      ],
       "tip_xyz_user_m": [
         0.008129969712570132,
         0.14849560584226337,
@@ -144714,6 +144892,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 8.49134349822998,
       "grasp_static_run_len": 11,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.01792368686611092,
+        0.23706218427167852,
+        0.10628215248811115
+      ],
       "tip_xyz_user_m": [
         0.01792368686611092,
         0.23706218427167852,
@@ -148513,6 +148698,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.6488046646118164,
       "grasp_static_run_len": 22,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.007068504757266876,
+        0.1517707065910315,
+        0.010931599358662128
+      ],
       "tip_xyz_user_m": [
         -0.007068504757266876,
         0.1517707065910315,
@@ -153706,6 +153898,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.2366034984588623,
       "grasp_static_run_len": 16,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.00911222425444166,
+        0.2141596704359911,
+        0.12894915433654291
+      ],
       "tip_xyz_user_m": [
         0.00911222425444166,
         0.2141596704359911,
@@ -158236,6 +158435,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 6.430337905883789,
       "grasp_static_run_len": 31,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.001179404873599558,
+        0.14895088562839998,
+        0.008569064640667659
+      ],
       "tip_xyz_user_m": [
         0.001179404873599558,
         0.14895088562839998,
@@ -163225,6 +163431,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.2366034984588623,
       "grasp_static_run_len": 19,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.00014410893210408283,
+        0.14972264699095267,
+        0.009205506865178709
+      ],
       "tip_xyz_user_m": [
         -0.00014410893210408283,
         0.14972264699095267,
@@ -167466,6 +167679,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 31.574607849121094,
       "grasp_static_run_len": 24,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.03455759456059193,
+        0.24693409773615613,
+        0.09272662359290183
+      ],
       "tip_xyz_user_m": [
         0.03455759456059193,
         0.24693409773615613,
@@ -171962,6 +172182,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.2366034984588623,
       "grasp_static_run_len": 10,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.018177821292124675,
+        0.2254733796527913,
+        0.08866251027625587
+      ],
       "tip_xyz_user_m": [
         0.018177821292124675,
         0.2254733796527913,
@@ -176985,6 +177212,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 5.523495674133301,
       "grasp_static_run_len": 12,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.003950153348469155,
+        0.2446176879660858,
+        0.09544120572809409
+      ],
       "tip_xyz_user_m": [
         -0.003950153348469155,
         0.2446176879660858,
@@ -181175,6 +181409,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 33.8829345703125,
       "grasp_static_run_len": 22,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.007286011372644591,
+        0.22423393224005375,
+        0.09612863885929489
+      ],
       "tip_xyz_user_m": [
         0.007286011372644591,
         0.22423393224005375,
@@ -185926,6 +186167,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.2366034984588623,
       "grasp_static_run_len": 133,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.005679858231736077,
+        0.14841894212200357,
+        0.008369422189633033
+      ],
       "tip_xyz_user_m": [
         -0.005679858231736077,
         0.14841894212200357,
@@ -192122,6 +192370,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.2366034984588623,
       "grasp_static_run_len": 10,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.0021138763618220565,
+        0.1924370023600836,
+        0.0877283132075074
+      ],
       "tip_xyz_user_m": [
         -0.0021138763618220565,
         0.1924370023600836,
@@ -196822,6 +197077,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 34.70733642578125,
       "grasp_static_run_len": 18,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.0014018706763849207,
+        0.2296515570764515,
+        0.09747076651012854
+      ],
       "tip_xyz_user_m": [
         0.0014018706763849207,
         0.2296515570764515,
@@ -201012,6 +201274,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 30.832645416259766,
       "grasp_static_run_len": 15,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        -0.02055379823224069,
+        0.2241366233063661,
+        0.08975290671910416
+      ],
       "tip_xyz_user_m": [
         -0.02055379823224069,
         0.2241366233063661,
@@ -205967,6 +206236,13 @@
       "grasp_pick_reason": "static_hold_most_closed",
       "grasp_gripper_deg": 1.6488046646118164,
       "grasp_static_run_len": 9,
+      "fk_target": "gripper_tip",
+      "cube_placement": "grasp_xy_table_z",
+      "grasp_xyz_user_m": [
+        0.0055127185981061495,
+        0.24096626114095293,
+        0.09601572364172554
+      ],
       "tip_xyz_user_m": [
         0.0055127185981061495,
         0.24096626114095293,

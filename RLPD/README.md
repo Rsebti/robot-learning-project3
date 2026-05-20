@@ -6,6 +6,25 @@ Dataset: [Rsebti/projet3_demos_v1](https://huggingface.co/datasets/Rsebti/projet
 
 ---
 
+## CUDA retest (pull latest, then)
+
+```powershell
+git pull origin main
+cd C:\Users\hugod\project3   # or your clone path
+
+# 1) Visual replay — cube on table at grasp XY, arm replays teleop
+python RLPD/scripts/replay_lerobot_in_isaac.py --episode 0
+
+# 2) Full QA — real vs sim + tcp_err_mm_at_grasp
+python RLPD/scripts/verify_real2sim_transfer.py --episodes 0 1 2 3 4 5
+
+# Open RLPD/data/verify/gallery.html
+```
+
+**Annotation rule (v2):** `grasp_xy_table_z` — cube **XY** from FK `gripper_tip` at clamped grasp; **Z** = table + 0.0125 m.
+
+---
+
 ## Folder layout
 
 ```
@@ -32,13 +51,12 @@ Per episode (39 total):
 
 | Field | Use |
 |-------|-----|
-| `grasp_frame_local` | Index into trajectory at quasi-static closed grasp (last frame of best hold) |
-| `cube_pose_urdf_world` | Spawn cube in Isaac `[x,y,z,qw,qx,qy,qz]` |
-| `cube_xyz_user_m` | Human-readable cube center (user frame) |
-| `trajectory_observation_state_deg` | Joint replay (motor deg, 6-DOF) |
-| `trajectory_action_deg` | Optional; use `--use_action_trajectory` on replay |
-
-Grasp selection (already applied): full rollout → static hold (≥8 frames, arm ≤8°/s, gripper ≤35°) → **most closed** hold → **last frame** of that hold. All 39 episodes: `static_hold_most_closed`.
+| `grasp_frame_local` | Quasi-static clamped grasp (last frame of best hold) |
+| `grasp_xyz_user_m` | FK at **gripper_tip** (center between closed jaws) |
+| `cube_xyz_user_m` | **XY = grasp XY**, **Z = table + cube half-height** (0.0225 m default) |
+| `cube_pose_urdf_world` | Spawn cube in Isaac |
+| `fk_target` | `gripper_tip` (run `measure_gripper_tip.py` if offset still zero) |
+| `cube_placement` | `grasp_xy_table_z` |
 
 ---
 

@@ -163,10 +163,15 @@ def main() -> int:
             except Exception as exc:
                 row["sim_error"] = str(exc)
                 print(f"[verify] sim ep {ep} failed: {exc}")
-        row["transfer_ok"] = row.get("tcp_err_mm_at_grasp", 999.0) <= args.tcp_good_mm
+            row["transfer_ok"] = row.get("tcp_err_mm_at_grasp", 999.0) <= args.tcp_good_mm
+            status = "OK" if row["transfer_ok"] else "BAD"
+        else:
+            row["transfer_ok"] = None
+            row["sim_skipped"] = True
+            status = "SKIP (real image only)"
         (ep_out / "metrics.json").write_text(json.dumps(row, indent=2), encoding="utf-8")
         summary.append(row)
-        print(f"  ep {ep}: tcp={row.get('tcp_err_mm_at_grasp','skip')}  {'OK' if row.get('transfer_ok') else 'BAD'}")
+        print(f"  ep {ep}: tcp={row.get('tcp_err_mm_at_grasp','skip')}  {status}")
 
     pd.DataFrame(summary).to_csv(verify_dir / "transfer_summary.csv", index=False)
     build_gallery(verify_dir, summary, args.tcp_good_mm)

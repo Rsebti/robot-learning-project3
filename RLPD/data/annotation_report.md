@@ -2,7 +2,8 @@
 
 - Episodes: **39**
 - FPS: **30.0**
-- Cube Z mode: **table_plus_half**
+- FK target: **gripper_tip**
+- Cube placement: **grasp_xy_table_z**
 
 ## Summary
 
@@ -13,4 +14,4 @@
 ## Columns (CSV)
 
 `cube_xyz_user_m` / `cube_pose_urdf_world` → spawn cube in Isaac replay.
-`grasp_motor_deg` → FK audit; same frame used for cube XY.
+`grasp_xyz_user_m` → FK between jaws; cube XY matches, Z = table + offset.
