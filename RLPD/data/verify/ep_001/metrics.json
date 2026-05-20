@@ -1,0 +1,12 @@
+{
+  "episode_index": 1,
+  "grasp_gripper_deg": 21.51690101623535,
+  "grasp_static_run_len": 27,
+  "cube_xyz_user_m": [
+    -0.05264517637138803,
+    0.2329935694367832,
+    0.0225
+  ],
+  "grasp_pick_reason": "static_hold_most_closed",
+  "transfer_ok": false
+}
