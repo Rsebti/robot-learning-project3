@@ -94,6 +94,41 @@ GOOD if `tcp_err_mm_at_grasp` &lt; 30 mm (tune `--tcp_good_mm` if needed).
 
 ---
 
+## Real robot deploy (RLPD checkpoint)
+
+Scripts in `project3/deploy/` (after `git pull`):
+
+| Script | Role |
+|--------|------|
+| `deploy/infer_rlpd.py` | RLPD policy on follower (80×144 wrist, delta actions) |
+| `deploy/run_rlpd_ik_place.py` | RLPD handoff → `ik_relative lift_place` |
+| `deploy/rlpd_infer_common.py` | Checkpoint probe + state builder |
+
+**Probe metadata:**
+
+```powershell
+python deploy/infer_rlpd.py --ckpt C:\Users\hugod\squint-rlpd\runs\<run>\ckpt_best.pt --probe_only
+# or
+python deploy/checkpoint_probe.py C:\Users\hugod\squint-rlpd\runs\<run>\ckpt_best.pt
+```
+
+**Pick + place (SPACE mid-rollout):**
+
+```powershell
+python deploy/run_rlpd_ik_place.py `
+  --ckpt C:\Users\hugod\squint-rlpd\runs\<run>\ckpt_best.pt `
+  --handoff_on_space `
+  --bowl_xyz 0.16 0.32 0.0 `
+  --goal_color 3 `
+  --follower_port COM3
+```
+
+Press **SPACE** while holding the cube → RLPD stops → IK lifts and moves to `--bowl_xy_m` / `--bowl_xyz`.
+
+Alternatives: `--handoff_on_grasp` (auto on closed gripper), `--handoff_step 200`.
+
+---
+
 ## ManiSkill RLPD (friend’s main job)
 
 Training stack: **`squint-rlpd`** (not this folder). Same dataset, separate ManiSkill annotations under:

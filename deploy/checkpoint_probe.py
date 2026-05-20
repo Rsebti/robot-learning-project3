@@ -22,7 +22,7 @@ if str(_DEPLOY) not in sys.path:
 @dataclass
 class CheckpointInfo:
     path: str
-    backend: str  # "sac" | "act" | "unknown"
+    backend: str  # "sac" | "rlpd" | "act" | "unknown"
     resolved_path: str
     manifest_path: str | None = None
     manifest: dict[str, Any] = field(default_factory=dict)
@@ -213,7 +213,35 @@ def probe(path_or_id: str) -> CheckpointInfo:
     p = Path(path_or_id)
     manifest_backend = None
     if p.is_file() and p.suffix.lower() == ".pt":
-        info = probe_sac(p)
+        import torch
+        raw = torch.load(p, map_location="cpu", weights_only=False)
+        if isinstance(raw, dict) and raw.get("critic") is not None:
+            from rlpd_infer_common import probe_rlpd_checkpoint, is_rlpd_checkpoint
+            if is_rlpd_checkpoint(raw):
+                m = probe_rlpd_checkpoint(p)
+                info = CheckpointInfo(
+                    path=str(p),
+                    backend="rlpd",
+                    resolved_path=str(p.resolve()),
+                    n_state=m.n_state,
+                    colour_conditioned=m.colour_conditioned,
+                    use_bowl_xyz=m.use_bowl_xyz,
+                    global_step=m.global_step,
+                    ckpt_keys=m.ckpt_keys,
+                    sac_policy_h=m.image_h,
+                    sac_policy_w=m.image_w,
+                    manifest=m.manifest,
+                    manifest_path=(str(mp) if (mp := _manifest_path_for(p)) else None),
+                )
+                info.suggested_script = m.manifest.get(
+                    "infer_script", "deploy/run_rlpd_ik_place.py"
+                )
+                info.suggested_home_pose = m.manifest.get("home_pose", "eval1_rest")
+                info.warnings.extend(m.warnings)
+            else:
+                info = probe_sac(p)
+        else:
+            info = probe_sac(p)
     elif p.is_dir() and (p / "config.json").is_file():
         info = probe_act(str(p))
     elif p.is_file() and p.name == "config.json":
@@ -253,7 +281,7 @@ def format_report(info: CheckpointInfo) -> str:
     ]
     if info.manifest_path:
         lines.append(f"manifest:       {info.manifest_path}")
-    if info.backend == "sac":
+    if info.backend in ("sac", "rlpd"):
         lines += [
             f"n_state:        {info.n_state}  "
             f"(colour={info.colour_conditioned}, bowl_xyz={info.use_bowl_xyz})",

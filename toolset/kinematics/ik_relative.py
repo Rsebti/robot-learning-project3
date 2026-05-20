@@ -329,6 +329,19 @@ def main():
                    help="Joint/gripper ramp easing (default smooth = smoothstep).")
     p.add_argument("--target", default="gripper_tip",
                    choices=["wrist", "wrist_roll", "gripper_frame", "gripper_tip"])
+    p.add_argument("--ik_mode", choices=["position", "position_vertical"], default="position",
+                   help="IK objective: position only, or position + gripper pointing down "
+                        "(tool +x toward base -z). Default position for backward compatibility.")
+    p.add_argument("--ik_seed_q_deg", type=float, nargs=6, default=None,
+                   metavar=("PAN", "LIFT", "ELBOW", "WFLEX", "WROLL", "GRIP"),
+                   help="Optional motor deg (6) used as IK warm-start for the first waypoint. "
+                        "FK baseline for offsets still uses the live (or --start_q_deg) pose.")
+    p.add_argument("--ik_staged", action=argparse.BooleanOptionalAction, default=True,
+                   help="If FK miss after IK, solve via midpoint then final target (default on).")
+    p.add_argument("--ik_retry_mm", type=float, default=8.0,
+                   help="FK position error (mm) above which staged IK is used.")
+    p.add_argument("--ik_mid_frac", type=float, default=0.5,
+                   help="Cartesian blend toward target for staged midpoint (0-1).")
     p.add_argument("--return_to_start", action=argparse.BooleanOptionalAction,
                    default=None,
                    help="After waypoints, drive arm joints back to start (default: yes, "
@@ -446,6 +459,13 @@ def main():
     q_urdf_now = q_motor[:5].copy()
     gripper_now_deg = float(np.rad2deg(q_motor[5]))
     start_q_motor = q_motor.copy()
+    ik_q_init = q_urdf_now.copy()
+    if args.ik_seed_q_deg is not None:
+        from toolset.kinematics.motor_to_urdf import MotorToUrdfConfig
+
+        ik_q_init = MotorToUrdfConfig.load().motor_to_urdf_rad(args.ik_seed_q_deg)
+        print(f"[ik-rel] IK warm-start from --ik_seed_q_deg (urdf deg): "
+              f"{np.rad2deg(ik_q_init).round(2).tolist()}")
 
     fk_start = fk.fk(q_urdf_now, target=args.target)
     xyz_start_urdf = fk_start["position"]
@@ -454,6 +474,7 @@ def main():
     print(f"[ik-rel] start FK xyz (user):  {xyz_start_user.round(4).tolist()} m "
           f"(right+, forward+, up+)")
     print("[ik-rel] waypoints: offsets from this start pose (not cumulative).")
+    print(f"[ik-rel] IK mode: {args.ik_mode}")
 
     plans: list[np.ndarray] = []
     if args.sequence == "lift_place":
@@ -506,23 +527,44 @@ def main():
             q_prev = q_tgt.copy()
     else:
         offset_list = [list(o) for o in args.offsets]
-        q_init = q_urdf_now.copy()
+        from toolset.kinematics.staged_ik import fk_pos_err_mm, solve_staged
+
+        q_init = ik_q_init.copy()
         for i, off_user in enumerate(offset_list):
             off_user = np.array(off_user, dtype=float)
             off_urdf = user_offset_to_urdf(off_user)
             tgt_urdf = xyz_start_urdf + off_urdf
-            res = ik.solve(tgt_urdf, q_init=q_init, target=args.target, mode="position")
-            if not res.converged:
+            stage_note = ""
+            if args.ik_staged:
+                res, stage_note = solve_staged(
+                    ik, fk, tgt_urdf, q_init,
+                    target_frame=args.target,
+                    mode=args.ik_mode,
+                    retry_mm=args.ik_retry_mm,
+                    mid_frac=args.ik_mid_frac,
+                )
+            else:
+                res = ik.solve(
+                    tgt_urdf, q_init=q_init, target=args.target, mode=args.ik_mode,
+                )
+            fk_mm = fk_pos_err_mm(fk, res.joints_rad, tgt_urdf, target_frame=args.target)
+            if not res.converged or fk_mm > args.ik_retry_mm:
                 print(f"[ik-rel] WP {i} target_urdf={tgt_urdf.round(3).tolist()} "
-                      f"FAILED: reason={res.reason}  pos_err={res.pos_err_m * 1000:.2f} mm")
+                      f"FAILED: reason={res.reason}  pos_err={res.pos_err_m * 1000:.2f} mm  "
+                      f"fk_err={fk_mm:.2f} mm")
                 if robot is not None:
                     robot.disconnect()
                 raise SystemExit(1)
             delta_rad = res.joints_rad - q_init
             tgt_user = urdf_xyz_to_user(tgt_urdf)
+            rot_note = (
+                f"  rot_err={res.rot_err_rad:.3f} rad"
+                if args.ik_mode == "position_vertical" else ""
+            )
+            staged_note = f"  [{stage_note}]" if stage_note and stage_note != "direct" else ""
             print(f"[ik-rel] WP {i}: offset_user={off_user.tolist()}  "
                   f"target_user={tgt_user.round(3).tolist()}  iters={res.iters}  "
-                  f"pos_err={res.pos_err_m * 1000:.2f} mm  "
+                  f"pos_err={res.pos_err_m * 1000:.2f} mm  fk_err={fk_mm:.2f} mm{rot_note}{staged_note}  "
                   f"delta_deg={np.rad2deg(delta_rad).round(2).tolist()}")
             plans.append(res.joints_rad.copy())
             q_init = res.joints_rad.copy()

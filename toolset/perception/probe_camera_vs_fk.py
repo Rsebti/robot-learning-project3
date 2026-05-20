@@ -17,7 +17,14 @@ Outputs under deploy/_snaps/probe_<ts>/:
 
 Usage:
     python -m toolset.perception.probe_camera_vs_fk `
-        --port COM3 --color red --n_trials 20 --save_frames
+        --port COM3 --color yellow --n_trials 20 --save_frames --map_only
+
+    # More trials in same session (yellow map):
+    python -m toolset.perception.probe_camera_vs_fk `
+        --map_only --save_frames --color yellow `
+        --session_dir deploy/_snaps/probe_1779205245 --n_trials 6
+
+    # Each map_only trial prints: MAP estimate (kNN) -> grasp FK -> est vs meas -> coverage hints
 """
 from __future__ import annotations
 
@@ -60,7 +67,7 @@ class _DShowVideoCapture(_OriginalVideoCapture):
 cv2.VideoCapture = _DShowVideoCapture
 
 from homes import get_home_deg                                                  # noqa: E402
-from robot_calibration import make_so101_follower_config                        # noqa: E402
+from robot_calibration import LOCAL_CALIBRATION_DIR, make_so101_follower_config  # noqa: E402
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig      # noqa: E402
 from toolset.perception.cube_localization import WRIST_CAM_HEIGHT, WRIST_CAM_WIDTH  # noqa: E402
 from lerobot.robots.utils import make_robot_from_config                         # noqa: E402
@@ -70,6 +77,11 @@ from toolset.kinematics.motor_to_urdf import MotorToUrdfConfig                  
 from toolset.kinematics.urdf_fk import SO101FK                                  # noqa: E402
 from toolset.perception.cube_localization import CubeLocalizer                  # noqa: E402
 from toolset.perception.estimate_cube_xy import load_hsv_ranges, loosen_hsv     # noqa: E402
+from toolset.perception.probe_map_guidance import (                           # noqa: E402
+    load_samples_from_mapping_csv,
+    print_post_grasp_block,
+    print_pre_grasp_block,
+)
 
 MOTOR_NAMES = [
     "shoulder_pan", "shoulder_lift", "elbow_flex",
@@ -558,6 +570,12 @@ def main():
                    help="Mapping mode: save pixel + FK only (no 3D backproj in frames/CSV).")
     p.add_argument("--loosen_hsv", action="store_true",
                    help="Widen S/V lower bounds for --color (dim light / yellow).")
+    p.add_argument("--k", type=int, default=3,
+                   help="kNN neighbors for live map estimate each trial (map_only).")
+    p.add_argument("--session_dir", type=Path, default=None,
+                   help="Append trials to an existing probe_* session (resume).")
+    p.add_argument("--start_trial", type=int, default=None,
+                   help="First trial index when resuming (default: next after last in session.json).")
     args = p.parse_args()
 
     fk_target = args.fk_target
@@ -568,64 +586,106 @@ def main():
     elif args.grasp_reference == "wrist":
         fk_target = "wrist"
 
-    out_dir = DEPLOY / "_snaps" / f"probe_{int(time.time())}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    session_meta: dict = {
-        "mode": "space_map" if args.map_only else "probe_cam_fk",
-        "out_dir": str(out_dir),
-        "home_pose": args.home_pose,
-        "color": args.color,
-        "n_trials": args.n_trials,
-        "n_obs_frames": args.n_obs_frames,
-        "obs_hz": args.obs_hz,
-        "port": args.port,
-        "camera_index": args.camera_index,
-        "camera_key": args.camera_key,
-        "fk_target": fk_target,
-        "grasp_reference": args.grasp_reference,
-        "map_only": args.map_only,
-        "started_at": time.time(),
-        "trials": [],
-    }
+    resume = args.session_dir is not None
+    if resume:
+        out_dir = args.session_dir.resolve()
+        if not out_dir.is_dir():
+            raise SystemExit(f"--session_dir not found: {out_dir}")
+        session_path = out_dir / "session.json"
+        if not session_path.is_file():
+            raise SystemExit(f"No session.json in {out_dir}")
+        session_meta = json.loads(session_path.read_text(encoding="utf-8"))
+        session_meta["resumed_at"] = time.time()
+        session_meta["n_trials"] = int(session_meta.get("n_trials", 0)) + args.n_trials
+        existing_nums = [int(t["trial"]) for t in session_meta.get("trials", [])]
+        start_trial = args.start_trial if args.start_trial is not None else (
+            max(existing_nums) + 1 if existing_nums else 0
+        )
+        trial_indices = list(range(start_trial, start_trial + args.n_trials))
+        print(f"[probe] RESUME {out_dir}  trials {trial_indices[0]:03d}..{trial_indices[-1]:03d} "
+              f"({len(trial_indices)} new)")
+    else:
+        out_dir = DEPLOY / "_snaps" / f"probe_{int(time.time())}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        start_trial = 0
+        trial_indices = list(range(args.n_trials))
+        session_meta = {
+            "mode": "space_map" if args.map_only else "probe_cam_fk",
+            "out_dir": str(out_dir),
+            "home_pose": args.home_pose,
+            "color": args.color,
+            "n_trials": args.n_trials,
+            "n_obs_frames": args.n_obs_frames,
+            "obs_hz": args.obs_hz,
+            "port": args.port,
+            "camera_index": args.camera_index,
+            "camera_key": args.camera_key,
+            "fk_target": fk_target,
+            "grasp_reference": args.grasp_reference,
+            "map_only": args.map_only,
+            "started_at": time.time(),
+            "trials": [],
+        }
 
     cx_img = WRIST_CAM_WIDTH / 2.0
     cy_img = WRIST_CAM_HEIGHT / 2.0
 
     csv_path = out_dir / "trials.csv"
-    csv_f = open(csv_path, "w", newline="")
+    csv_mode = "a" if resume and csv_path.is_file() else "w"
+    csv_f = open(csv_path, csv_mode, newline="")
     csv_w = csv.writer(csv_f)
-    if args.map_only:
-        csv_w.writerow([
-            "trial", "color", "n_pixel_frames", "pixel_u", "pixel_v", "du_px", "dv_px",
-            "fk_x_user", "fk_y_user", "fk_z_user",
-            "home_no_image", "home_no_pixel", "home_ok",
-            *[f"home_{n}" for n in MOTOR_NAMES],
-            *[f"grasp_{n}" for n in MOTOR_NAMES],
-        ])
-    else:
-        csv_w.writerow([
-            "trial", "color", "frames_captured", "frames_detected",
-            "cam_x_user", "cam_y_user", "cam_z_user",
-            "fk_x_user", "fk_y_user", "fk_z_user",
-            "err_x_mm", "err_y_mm", "err_z_mm", "err_norm_mm",
-            "home_no_image", "home_no_pixel", "home_no_backproj", "home_ok",
-            *MOTOR_NAMES,
-        ])
+    if csv_mode == "w":
+        if args.map_only:
+            csv_w.writerow([
+                "trial", "color", "n_pixel_frames", "pixel_u", "pixel_v", "du_px", "dv_px",
+                "fk_x_user", "fk_y_user", "fk_z_user",
+                "home_no_image", "home_no_pixel", "home_ok",
+                *[f"home_{n}" for n in MOTOR_NAMES],
+                *[f"grasp_{n}" for n in MOTOR_NAMES],
+            ])
+        else:
+            csv_w.writerow([
+                "trial", "color", "frames_captured", "frames_detected",
+                "cam_x_user", "cam_y_user", "cam_z_user",
+                "fk_x_user", "fk_y_user", "fk_z_user",
+                "err_x_mm", "err_y_mm", "err_z_mm", "err_norm_mm",
+                "home_no_image", "home_no_pixel", "home_no_backproj", "home_ok",
+                *MOTOR_NAMES,
+            ])
     map_csv_path = out_dir / "mapping_samples.csv"
-    map_csv_f = open(map_csv_path, "w", newline="") if args.map_only else None
+    map_csv_f = None
     map_csv_w = None
-    if map_csv_f is not None:
+    if args.map_only:
+        map_mode = "a" if resume and map_csv_path.is_file() else "w"
+        map_csv_f = open(map_csv_path, map_mode, newline="")
         map_csv_w = csv.writer(map_csv_f)
-        map_csv_w.writerow([
-            "trial", "color", "pixel_u", "pixel_v", "du_px", "dv_px",
-            "fk_x_user", "fk_y_user", "fk_z_user",
-            *[f"home_{n}" for n in MOTOR_NAMES],
-            *[f"grasp_{n}" for n in MOTOR_NAMES],
-        ])
+        if map_mode == "w":
+            map_csv_w.writerow([
+                "trial", "color", "pixel_u", "pixel_v", "du_px", "dv_px",
+                "fk_x_user", "fk_y_user", "fk_z_user",
+                *[f"home_{n}" for n in MOTOR_NAMES],
+                *[f"grasp_{n}" for n in MOTOR_NAMES],
+            ])
     print(f"[probe] session -> {out_dir}")
     if args.map_only:
         print("[probe] map_only: pixel + grasp FK only (no 3D backproj; offline: probe_space_map.py)")
+        print("[probe] each trial: home photo -> MAP estimate -> grasp FK -> est vs meas -> mapping_samples.csv")
+
+    validation_csv_path = out_dir / "trial_validation.csv"
+    validation_csv_f = None
+    validation_csv_w = None
+    if args.map_only:
+        val_mode = "a" if resume and validation_csv_path.is_file() else "w"
+        validation_csv_f = open(validation_csv_path, val_mode, newline="", encoding="utf-8")
+        validation_csv_w = csv.DictWriter(validation_csv_f, fieldnames=[
+            "trial", "du_px", "dv_px", "est_x", "est_y", "est_z",
+            "meas_x", "meas_y", "meas_z", "err_est_meas_xy_mm", "err_est_meas_z_mm",
+            "in_map_hull", "nearest_prior_trial", "nearest_prior_px", "neighbor_trials",
+        ])
+        if val_mode == "w":
+            validation_csv_w.writeheader()
+
+    errors_xy_mm: list[float] = []
 
     home_deg = get_home_deg(args.home_pose)
     print(f"[probe] home {args.home_pose!r}: {home_deg.round(1).tolist()}")
@@ -635,6 +695,7 @@ def main():
         cameras={"base_camera": OpenCVCameraConfig(
             index_or_path=args.camera_index, fps=30,
             width=WRIST_CAM_WIDTH, height=WRIST_CAM_HEIGHT)},
+        calibration_dir=LOCAL_CALIBRATION_DIR,
         use_degrees=True,
     )
     log_robot_cameras(cfg, "probe")
@@ -653,11 +714,15 @@ def main():
         print(f"[probe] loosen_hsv enabled for {args.color!r}", flush=True)
     localizer = CubeLocalizer(kcfg=kcfg, mcfg=mcfg, fk=fk, hsv_ranges=hsv_ranges)
 
-    calib_bundle = build_calibration_bundle(
-        args=args, kcfg=kcfg, mcfg=mcfg, localizer=localizer, home_deg=home_deg,
-    )
-    write_calibration_bundle(out_dir, calib_bundle)
-    print(f"[probe] calibrations -> {out_dir / 'calibrations.json'}")
+    calib_path = out_dir / "calibrations.json"
+    if not (resume and calib_path.is_file()):
+        calib_bundle = build_calibration_bundle(
+            args=args, kcfg=kcfg, mcfg=mcfg, localizer=localizer, home_deg=home_deg,
+        )
+        write_calibration_bundle(out_dir, calib_bundle)
+        print(f"[probe] calibrations -> {calib_path}")
+    else:
+        print(f"[probe] reusing {calib_path}")
 
     # Log observation keys once
     obs0 = robot.get_observation()
@@ -675,9 +740,10 @@ def main():
 
         period = 1.0 / max(0.1, args.obs_hz)
 
-        for trial in range(args.n_trials):
+        n_new = len(trial_indices)
+        for i_t, trial in enumerate(trial_indices):
             trial_dir = out_dir / f"trial_{trial:03d}"
-            print(f"\n========== Trial {trial + 1}/{args.n_trials} ==========")
+            print(f"\n========== Trial {trial:03d}  ({i_t + 1}/{n_new} new) ==========")
             input("Place the cube, then press Enter. ")
 
             print("[ramp] home ...")
@@ -734,7 +800,29 @@ def main():
                 print(f"[cam] median n={len(cam_xyzs)} -> "
                       f"user ({cam_x_user:+.3f}, {cam_y_user:+.3f}, {cam_z_user:+.3f}) m")
 
-            print("\n>>> Grasp: Enter -> torque off -> position -> Enter.")
+            est_info = None
+            pu = pv = du = dv = float("nan")
+            if args.map_only and home_pixel is not None:
+                pu, pv = float(home_pixel[0]), float(home_pixel[1])
+                du, dv = pu - cx_img, pv - cy_img
+                prior_samples = load_samples_from_mapping_csv(
+                    map_csv_path, session_dir=out_dir,
+                )
+                est_info = print_pre_grasp_block(
+                    trial=trial,
+                    du=du,
+                    dv=dv,
+                    pu=pu,
+                    pv=pv,
+                    samples=prior_samples,
+                    k=args.k,
+                )
+            elif args.map_only:
+                print("\n[map] No pixel at home — skip map estimate; fix detect before trusting row.")
+
+            print("\n>>> GRASP PROBE — Enter -> torque off -> side grasp on cube -> Enter.")
+            if est_info is not None:
+                print(">>> (measured FK will be compared to MAP estimate above)")
             input(">>> Support arm, Enter to disable torque. ")
             robot.bus.disable_torque()
             input(">>> Perfect grasp on cube center, Enter to record. ")
@@ -747,6 +835,52 @@ def main():
             fk_y_user = float(+fk_urdf[0])
             fk_z_user = float(+fk_urdf[2])
             print(f"[fk] user ({fk_x_user:+.3f}, {fk_y_user:+.3f}, {fk_z_user:+.3f}) m")
+
+            measured_fk = np.array([fk_x_user, fk_y_user, fk_z_user], dtype=float)
+            err_est_xy = float("nan")
+            if args.map_only and home_pixel is not None:
+                err_est_xy = print_post_grasp_block(
+                    trial=trial,
+                    est_info=est_info,
+                    measured=measured_fk,
+                    errors_xy_mm=errors_xy_mm,
+                )
+                if np.isfinite(err_est_xy):
+                    errors_xy_mm.append(err_est_xy)
+                if validation_csv_w is not None:
+                    est = est_info["est_xyz_user_m"] if est_info else [np.nan] * 3
+                    validation_csv_w.writerow({
+                        "trial": trial,
+                        "du_px": f"{du:+.1f}",
+                        "dv_px": f"{dv:+.1f}",
+                        "est_x": f"{est[0]:+.4f}" if est_info else "nan",
+                        "est_y": f"{est[1]:+.4f}" if est_info else "nan",
+                        "est_z": f"{est[2]:+.4f}" if est_info else "nan",
+                        "meas_x": f"{fk_x_user:+.4f}",
+                        "meas_y": f"{fk_y_user:+.4f}",
+                        "meas_z": f"{fk_z_user:+.4f}",
+                        "err_est_meas_xy_mm": f"{err_est_xy:.1f}" if np.isfinite(err_est_xy) else "nan",
+                        "err_est_meas_z_mm": (
+                            f"{(est[2]-fk_z_user)*1000:+.1f}" if est_info else "nan"
+                        ),
+                        "in_map_hull": est_info.get("in_map_hull") if est_info else "",
+                        "nearest_prior_trial": est_info.get("nearest_train_trial") if est_info else "",
+                        "nearest_prior_px": (
+                            f"{est_info['nearest_train_dist_px']:.1f}" if est_info else ""
+                        ),
+                        "neighbor_trials": str(est_info.get("neighbor_trials", "")) if est_info else "",
+                    })
+                    validation_csv_f.flush()
+                (trial_dir / "trial_validation.json").write_text(
+                    json.dumps({
+                        "trial": trial,
+                        "du_px": du, "dv_px": dv,
+                        "est_info": est_info,
+                        "measured_fk_xyz_user_m": measured_fk.tolist(),
+                        "err_est_meas_xy_mm": err_est_xy,
+                    }, indent=2, default=_np_to_json),
+                    encoding="utf-8",
+                )
 
             grasp_dir = trial_dir / "grasp"
             if args.save_frames:
@@ -787,11 +921,8 @@ def main():
                 print(f"[err] mm: x={err_x:+.1f} y={err_y:+.1f} z={err_z:+.1f} ||={err_norm:.1f}")
 
             if args.map_only:
-                du = dv = float("nan")
-                pu = pv = float("nan")
-                if home_pixel is not None:
-                    pu, pv = float(home_pixel[0]), float(home_pixel[1])
-                    du, dv = pu - cx_img, pv - cy_img
+                if home_pixel is None:
+                    pu = pv = du = dv = float("nan")
                 csv_w.writerow([
                     trial, args.color, len(pixels_ok), f"{pu:.1f}", f"{pv:.1f}",
                     f"{du:+.1f}", f"{dv:+.1f}",
@@ -830,6 +961,8 @@ def main():
 
             trial_rec = {
                 "trial": trial,
+                "map_est_preview": est_info if args.map_only else None,
+                "err_est_meas_xy_mm": err_est_xy if args.map_only else None,
                 "trial_dir": str(trial_dir.relative_to(out_dir)),
                 "frames_captured": frames_captured,
                 "frames_detected": len(pixels_ok) if args.map_only else len(cam_xyzs),
@@ -868,6 +1001,8 @@ def main():
         csv_f.close()
         if map_csv_f is not None:
             map_csv_f.close()
+        if validation_csv_f is not None:
+            validation_csv_f.close()
         write_session_report(out_dir, session_meta, args.color)
         with open(out_dir / "session.json", "w") as mf:
             json.dump(session_meta, mf, indent=2, default=_np_to_json)
@@ -902,8 +1037,16 @@ def main():
                 n_map = sum(1 for _ in csv.DictReader(open(map_path)))
             print(f"\n=== space_map: {n_px}/{len(rows)} trials with pixel "
                   f"({n_map} in mapping_samples.csv) ===")
-            print("  Offline: python -m toolset.perception.probe_space_map "
+            if errors_xy_mm:
+                import statistics as st
+                print(f"  est vs measured xy: n={len(errors_xy_mm)}  "
+                      f"median={st.median(errors_xy_mm):.1f} mm  "
+                      f"max={max(errors_xy_mm):.1f} mm")
+                print(f"  see {out_dir / 'trial_validation.csv'}")
+            print("  Offline: python -m toolset.perception.probe_map_data "
                   f"--session_dir {out_dir}")
+            print("  HTML: python -m toolset.perception.probe_map_visual_report "
+                  f"--map_session_dir {out_dir}")
 
 
 if __name__ == "__main__":

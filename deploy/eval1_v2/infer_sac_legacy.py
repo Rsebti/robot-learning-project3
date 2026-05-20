@@ -499,6 +499,12 @@ def main():
                    help="Home preset to fold the arm into AFTER the rollout (servo deg, "
                         "converted to sim rad with gripper remap). Default 'eval1_rest' "
                         "= universal folded pose. Pass an empty string '' to disable.")
+    p.add_argument("--handoff_on_grasp", action="store_true",
+                   help="Exit rollout after grip-force close completes (for SAC→IK place). "
+                        "Skips park/home; disconnects at grasp pose.")
+    p.add_argument("--handoff_grasp_immediate", action="store_true",
+                   help="With --handoff_on_grasp: hand off on first close intent (before "
+                        "grip_force_steps finish). Default: after forced-close steps.")
     add_sac_home_cli(p, default_home_pose="auto", allow_auto=True)
     p.add_argument("--policy_image_hw", type=int, nargs=2, metavar=("H", "W"),
                    help="Override CNN input height/width in pixels (default: inferred from "
@@ -610,10 +616,13 @@ def main():
             GRIP_FORCE_STEPS = int(args.grip_force_steps)  # forced-close steps; override via --grip_force_steps
             grip_force_remaining = 0
             grip_already_triggered = False
+            args.handoff_grasped = False
 
             log_qpos, log_target, log_action_raw, log_policy_rgb = [], [], [], []
+            n_steps_done = 0
 
             for step in range(args.episode_steps):
+                n_steps_done = step + 1
                 t_obs_start = time.perf_counter()
                 t0 = t_obs_start   # keep legacy name for the sleep at end
 
@@ -657,6 +666,18 @@ def main():
                 # -------------------------------------------------------------
 
                 agent.set_target_qpos(torch.from_numpy(target_qpos))
+
+                if args.handoff_on_grasp:
+                    ready = False
+                    if args.handoff_grasp_immediate and grip_already_triggered:
+                        ready = True
+                    elif grip_already_triggered and grip_force_remaining == 0:
+                        ready = True
+                    if ready:
+                        args.handoff_grasped = True
+                        print(f"[handoff] grasp detected at step {step} — stopping SAC for IK",
+                              flush=True)
+                        break
 
                 # Per-step control-rate accounting (for Rerun panel).
                 t_now = time.perf_counter()
@@ -702,30 +723,42 @@ def main():
                 )
                 print(f"  ÔåÆ saved {log_dir / f'ep{ep:03d}.npz'}")
             elapsed = time.perf_counter() - rollout_t0
-            achieved_hz = args.episode_steps / elapsed
-            print(f"Episode done ({args.episode_steps} steps in {elapsed:.2f}s "
-                  f"-> achieved {achieved_hz:.1f} Hz, target {args.control_hz} Hz)")
+            achieved_hz = n_steps_done / max(elapsed, 1e-6)
+            if getattr(args, "handoff_grasped", False):
+                print(f"[handoff] SAC stopped after {n_steps_done} steps ({elapsed:.2f}s, "
+                      f"{achieved_hz:.1f} Hz)", flush=True)
+            else:
+                print(f"Episode done ({n_steps_done} steps in {elapsed:.2f}s "
+                      f"-> achieved {achieved_hz:.1f} Hz, target {args.control_hz} Hz)")
+            if args.handoff_on_grasp and not getattr(args, "handoff_grasped", False):
+                print("[handoff] WARNING: episode ended without grasp detection", flush=True)
     except KeyboardInterrupt:
         print("\nQuitting.")
     finally:
-        # End-of-rollout park: fold to --park_pose preset (servo deg from
-        # homes.py, converted to sim rad with the gripper remap). If
-        # --park_pose '', skip and just disconnect.
-        park = getattr(args, "park_pose", "") or ""
-        if park:
-            try:
-                from homes import get_home_deg
-                park_deg = get_home_deg(park)
-                sim_rad = agent.servo_deg_to_sim_rad(park_deg)
-                print(f"\n[park] folding to preset {park!r} (servo deg): "
-                      f"{park_deg.round(1).tolist()}", flush=True)
-                agent.reset(torch.from_numpy(sim_rad))
-                print("[park] folded.", flush=True)
-            except Exception as e:
-                print(f"[park] could not fold to {park!r}: {e}", flush=True)
-        elif args.home:
-            agent.reset(get_home_rad(args.home_pose))
+        handoff = bool(getattr(args, "handoff_grasped", False))
+        if handoff:
+            print("[handoff] leaving arm at grasp pose (no park/home)", flush=True)
+        else:
+            # End-of-rollout park: fold to --park_pose preset (servo deg from
+            # homes.py, converted to sim rad with the gripper remap). If
+            # --park_pose '', skip and just disconnect.
+            park = getattr(args, "park_pose", "") or ""
+            if park:
+                try:
+                    from homes import get_home_deg
+                    park_deg = get_home_deg(park)
+                    sim_rad = agent.servo_deg_to_sim_rad(park_deg)
+                    print(f"\n[park] folding to preset {park!r} (servo deg): "
+                          f"{park_deg.round(1).tolist()}", flush=True)
+                    agent.reset(torch.from_numpy(sim_rad))
+                    print("[park] folded.", flush=True)
+                except Exception as e:
+                    print(f"[park] could not fold to {park!r}: {e}", flush=True)
+            elif args.home:
+                agent.reset(get_home_rad(args.home_pose))
         robot.disconnect()
+        if args.handoff_on_grasp:
+            raise SystemExit(0 if getattr(args, "handoff_grasped", False) else 2)
 
 
 if __name__ == "__main__":

@@ -109,8 +109,13 @@ def write_gallery(session_dir: Path) -> None:
                 except (KeyError, ValueError):
                     pass
 
+    from toolset.perception.probe_map_data import load_excluded_trials
+    excluded = load_excluded_trials(session_dir)
+
     rows_html = []
     for tri_dir in sorted(session_dir.glob("trial_*")):
+        if not tri_dir.is_dir():
+            continue
         tri = int(tri_dir.name.split("_")[1])
         home = tri_dir / "home"
         if not home.is_dir():
@@ -121,6 +126,9 @@ def write_gallery(session_dir: Path) -> None:
         if hp is None and not (home / "frame_00_square.json").is_file():
             status_cls = "bad"
             status = "no pixel"
+        elif tri in excluded:
+            status_cls = "bad"
+            status = "EXCLUDED from map"
         elif in_map:
             status_cls = "ok"
             status = "in map"

@@ -34,8 +34,15 @@ WRIST_CAM_WIDTH = 640
 WRIST_CAM_HEIGHT = 480
 
 
-def load_samples(session_dir: Path) -> list[dict]:
+def load_samples(session_dir: Path, *, use_refined: bool = True) -> list[dict]:
+    from toolset.perception.probe_map_data import load_excluded_trials
+
+    excluded = load_excluded_trials(session_dir)
     path = session_dir / "mapping_samples.csv"
+    if use_refined:
+        refined = session_dir / "mapping_samples_refined.csv"
+        if refined.is_file():
+            path = refined
     if path.is_file():
         with open(path, newline="", encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
@@ -55,6 +62,8 @@ def load_samples(session_dir: Path) -> list[dict]:
             except (KeyError, ValueError):
                 continue
         if out:
+            if excluded:
+                out = [s for s in out if int(s["trial"]) not in excluded]
             return out
 
     meta = json.loads((session_dir / "session.json").read_text())
@@ -72,6 +81,8 @@ def load_samples(session_dir: Path) -> list[dict]:
             "dv": float(off[1]),
             "fk": np.asarray(fk, dtype=float),
         })
+    if excluded:
+        samples = [s for s in samples if int(s["trial"]) not in excluded]
     return samples
 
 

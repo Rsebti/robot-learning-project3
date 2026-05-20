@@ -81,8 +81,8 @@ def main():
     if not args.probe_only:
         ckpt_path = resolve_checkpoint(args.ckpt, args.name)
         info = probe(ckpt_path)
-        if info.kind != "sac":
-            raise SystemExit(f"Expected SAC .pt, got {info.kind}")
+        if info.backend != "sac":
+            raise SystemExit(f"Expected SAC .pt, got {info.backend!r}")
 
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
     log_path = SESSION_DIR / "episodes.jsonl"
